@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>超低门槛 ComfyUI 工作流集成应用</title>
+<link rel="stylesheet" href="/static/styles/shell.css">
+<link rel="stylesheet" href="/static/styles/workbench.css">
+<link rel="stylesheet" href="/static/pages/pages.css">
+</head>
+<body>
+<div id="dcp-app"></div>
+<div id="dcp-toasts" class="toasts"></div>
+
+<!-- 复用插件版面板：先装载 React（UMD，随项目携带），再给面板提供最小宿主适配层。 -->
+<script src="/static/vendor/react.production.min.js"></script>
+<script src="/static/vendor/react-dom.production.min.js"></script>
+<script src="/static/panel-host.js"></script>
+<!-- panel.js = 插件版 lib/client.js 的适配副本（见 docs/FULL-REFERENCE.md「面板复用与改造」） -->
+<script src="/static/panel.js"></script>
+<script type="module" src="/static/app-shell.js"></script>
+</body>
+</html>

@@ -1,0 +1,257 @@
+/* shell.css —— 独立版外壳与新页面共用的基础样式。
+   面板自身的样式由 panel.js 的 CSS 常量注入（`.dcp-*`），这里只做布局与「面板落位」覆盖。
+   约定：新页面只能用本文件 + pages/pages.css 里存在的类名（新增类名必须进 CSS）。 */
+
+:root {
+  --bg: #14151a;
+  --bg2: #1b1d24;
+  --bg3: #23262f;
+  --line: rgba(255, 255, 255, .1);
+  --fg: #e9e9ef;
+  --fg2: #c4c4cf;
+  --fg3: #9a9aa8;
+  --accent: #2f6feb;
+  --accent2: #5b9bff;
+  --ok: #4ade80;
+  --warn: #fcd34d;
+  --err: #fda4af;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font: 13px/1.55 system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+
+#dcp-app { height: 100%; }
+
+/* ── 布局 ───────────────────────────────────────────────── */
+.app { display: flex; height: 100%; min-height: 0; }
+
+.sidebar {
+  width: 186px;
+  flex: none;
+  background: var(--bg2);
+  border-right: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 10px;
+  min-height: 0;
+}
+
+.brand { font-weight: 700; font-size: 13px; line-height: 1.35; padding: 2px 4px 8px; color: #fff; }
+.brand .brand-sub { display: block; font-weight: 400; font-size: 11px; color: var(--fg3); }
+
+.nav { display: flex; flex-direction: column; gap: 2px; overflow-y: auto; min-height: 0; }
+
+.nav-item {
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  color: var(--fg2);
+  font: inherit;
+  padding: 7px 10px;
+  cursor: pointer;
+}
+.nav-item:hover { background: rgba(255, 255, 255, .06); color: #fff; }
+.nav-item.active { background: var(--accent); color: #fff; }
+
+.main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+
+.topbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg2);
+}
+.topbar .sp { flex: 1; }
+
+.content { flex: 1; min-height: 0; overflow: hidden; display: flex; }
+
+/* ── 状态与徽标 ─────────────────────────────────────────── */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 11px;
+  color: var(--fg2);
+  white-space: nowrap;
+}
+.badge.bad { color: var(--err); border-color: rgba(248, 113, 113, .35); }
+.badge.good { color: var(--ok); border-color: rgba(74, 222, 128, .35); }
+.badge.warn { color: var(--warn); border-color: rgba(252, 211, 77, .35); }
+
+.dot { width: 8px; height: 8px; border-radius: 50%; background: #6b7280; display: inline-block; }
+.dot.on { background: var(--ok); }
+.dot.off { background: #f87171; }
+
+/* ── 页面 ───────────────────────────────────────────────── */
+.page { flex: 1; min-width: 0; overflow-y: auto; padding: 16px 18px 40px; }
+
+.page-title { font-size: 16px; font-weight: 700; margin: 0 0 2px; }
+.page-sub { color: var(--fg3); font-size: 12px; margin: 0 0 14px; }
+
+.card {
+  background: var(--bg2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+}
+.card-title { font-size: 12px; font-weight: 700; color: #8fb4ff; letter-spacing: .06em; margin: 0 0 8px; }
+
+.row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.row.tight { gap: 5px; }
+.col { display: flex; flex-direction: column; gap: 8px; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
+.sp { flex: 1; }
+
+.field { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.label { font-size: 11px; color: var(--fg2); }
+.hint { font-size: 11px; color: var(--fg3); }
+.muted { color: var(--fg3); font-size: 11px; }
+.error { color: var(--err); font-size: 12px; white-space: pre-wrap; }
+.ok { color: var(--ok); font-size: 12px; }
+.warn { color: var(--warn); font-size: 12px; }
+.mono { font-family: ui-monospace, Consolas, monospace; font-size: 11px; word-break: break-all; }
+
+/* ── 控件 ───────────────────────────────────────────────── */
+.btn {
+  background: rgba(255, 255, 255, .12);
+  color: #eceff5;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  padding: 5px 11px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn.primary { background: var(--accent); color: #fff; }
+.btn.danger { background: #b91c1c; color: #fff; }
+.btn.tiny { padding: 2px 7px; font-size: 11px; }
+.btn:disabled { opacity: .45; cursor: default; }
+.btn:not(:disabled):hover { filter: brightness(1.12); }
+
+.input, .select, .textarea {
+  background: rgba(255, 255, 255, .07);
+  color: #f2f2f6;
+  border: 1px solid rgba(255, 255, 255, .14);
+  border-radius: 7px;
+  padding: 5px 8px;
+  font: inherit;
+  font-size: 12px;
+  width: 100%;
+  min-width: 0;
+}
+.textarea { resize: vertical; min-height: 70px; }
+.input:focus, .select:focus, .textarea:focus { outline: 1.5px solid var(--accent2); }
+.input.narrow, .select.narrow { width: auto; }
+.option-dark option { background: #1c1c22; color: #f2f2f6; }
+.check { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--fg2); }
+.check input { accent-color: var(--accent); }
+
+/* ── 列表 ───────────────────────────────────────────────── */
+.list { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.list-row { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid rgba(255, 255, 255, .06); }
+.list-row:last-child { border-bottom: 0; }
+.list-row .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.list-scroll { max-height: 320px; overflow-y: auto; }
+.count { color: var(--fg3); font-size: 11px; }
+
+.table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.table th, .table td { text-align: left; padding: 5px 8px; border-bottom: 1px solid rgba(255, 255, 255, .07); }
+.table th { color: #8fb4ff; font-weight: 600; font-size: 11px; }
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(47, 111, 235, .18);
+  border: 1px solid rgba(91, 157, 255, .45);
+  border-radius: 999px;
+  padding: 1px 9px;
+  font-size: 11px;
+  color: #d8e6ff;
+}
+.chip.blocked { background: rgba(248, 113, 113, .14); border-color: rgba(248, 113, 113, .4); color: #ffd7d7; }
+.chip button { background: transparent; border: 0; color: inherit; cursor: pointer; font: inherit; font-size: 11px; padding: 0; }
+
+/* ── 弹窗 ───────────────────────────────────────────────── */
+.modal-mask {
+  position: fixed; inset: 0; background: rgba(0, 0, 0, .55);
+  display: flex; align-items: center; justify-content: center; z-index: 60;
+}
+.modal { background: var(--bg3); border: 1px solid var(--line); border-radius: 12px; padding: 16px; width: min(560px, 92vw); max-height: 86vh; overflow-y: auto; }
+.modal-title { font-weight: 700; margin-bottom: 8px; }
+.modal-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+
+/* ── Toast ──────────────────────────────────────────────── */
+.toasts { position: fixed; right: 14px; bottom: 14px; display: flex; flex-direction: column; gap: 8px; z-index: 80; }
+.toast {
+  background: rgba(28, 30, 38, .97);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent2);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+  max-width: 420px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .4);
+}
+.toast.ok { border-left-color: var(--ok); }
+.toast.warn { border-left-color: var(--warn); }
+.toast.error { border-left-color: var(--err); }
+
+/* ── 长任务视图 ─────────────────────────────────────────── */
+.job { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: rgba(255, 255, 255, .03); }
+.job-bar { height: 6px; border-radius: 3px; background: rgba(255, 255, 255, .1); overflow: hidden; margin: 6px 0; }
+.job-bar > i { display: block; height: 100%; background: linear-gradient(90deg, #2f6feb, #22c55e); transition: width .3s; }
+.job-log {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  white-space: pre-wrap;
+  max-height: 200px;
+  overflow-y: auto;
+  background: rgba(0, 0, 0, .28);
+  border-radius: 6px;
+  padding: 6px 8px;
+  margin-top: 6px;
+}
+
+/* ── 生图面板落位 ───────────────────────────────────────── */
+.panel-slot { flex: 1; min-width: 0; min-height: 0; display: flex; position: relative; }
+/* 面板原样式是 400px 悬浮抽屉；独立版把它摊平成整页内容区。 */
+.panel-slot .dcp-panel {
+  position: relative;
+  inset: auto;
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  box-shadow: none;
+  border-left: 0;
+  background: transparent;
+  flex: 1;
+  min-width: 0;
+}
+.panel-slot .dcp-body { padding: 14px 18px 40px; }
+.panel-slot .dcp-head { padding: 9px 18px; }
+
+.wizard-banner {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  background: rgba(252, 211, 77, .1); border: 1px solid rgba(252, 211, 77, .3);
+  border-radius: 8px; padding: 8px 12px; margin-bottom: 12px; font-size: 12px; color: #ffe9a8;
+}
+.log-drawer { border-top: 1px solid var(--line); background: var(--bg2); max-height: 40vh; overflow-y: auto; padding: 10px 14px; }

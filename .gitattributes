@@ -1,0 +1,19 @@
+# 换行与文本属性：让"核心版 = git 仓库本身"在别的机器/编辑器下也稳定。
+# 说明：.ps1 与 .cmd 必须保持 CRLF（Windows PowerShell 5.1 解析用），
+#       其余文本统一 LF 以免每台机器都产生"整个文件都改了"的假 diff。
+#       BOM 属于文件内容，git 不会改动它（installer/models.json 的 BOM 会保留）。
+
+* text=auto eol=lf
+
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+installer/models.json text eol=crlf
+
+*.safetensors binary
+*.gguf binary
+*.7z binary
+*.zip binary
+*.png binary
+*.jpg binary
+*.webp binary

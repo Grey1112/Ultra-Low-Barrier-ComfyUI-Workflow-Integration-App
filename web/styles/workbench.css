@@ -1,0 +1,192 @@
+/* workbench.css —— 三合一工作台（生图面板 / 本地 LLM / 画师）的布局样式。
+   原则：每栏独立滚动、宽度按内容比例、窄窗口自动降级，避免"过大或过小"。 */
+
+.wb {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 8px 10px 0;
+  gap: 8px;
+}
+
+.wb-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 0 2px 6px;
+  border-bottom: 1px solid var(--line);
+}
+
+.wb-seg { display: inline-flex; border: 1px solid rgba(255, 255, 255, .16); border-radius: 7px; overflow: hidden; }
+.wb-seg button { background: transparent; border: 0; color: var(--fg2); font: inherit; font-size: 12px; padding: 4px 10px; cursor: pointer; }
+.wb-seg button.on { background: var(--accent); color: #fff; }
+
+.wb-hint { color: var(--fg3); font-size: 11px; }
+
+.wb-grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  gap: 8px;
+  align-items: stretch;
+}
+
+/* 三栏：生图最宽，LLM 次之，画师最窄；最小宽度保证不塌陷 */
+.wb-layout-3 .wb-grid { grid-template-columns: minmax(360px, 1.08fr) minmax(320px, .95fr) minmax(250px, .72fr); }
+.wb-layout-2 .wb-grid { grid-template-columns: minmax(360px, 1.15fr) minmax(340px, 1fr); }
+.wb-layout-gen .wb-grid { grid-template-columns: minmax(0, 1fr); }
+
+/* 窄窗口自动降级（不靠 JS 判断，纯 CSS 断点，缩放窗口即时生效） */
+@media (max-width: 1560px) {
+  .wb-layout-3 .wb-grid { grid-template-columns: minmax(340px, 1.1fr) minmax(330px, 1fr); }
+  .wb-layout-3 .wb-col.wb-art { display: none; }
+}
+@media (max-width: 1180px) {
+  .wb-layout-3 .wb-grid,
+  .wb-layout-2 .wb-grid { grid-template-columns: minmax(0, 1fr); }
+  .wb-layout-2 .wb-col.wb-llm { display: none; }
+}
+
+.wb-col {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.wb-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(255, 255, 255, .03);
+}
+
+.wb-fold {
+  background: transparent;
+  border: 0;
+  color: #8fb4ff;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  cursor: pointer;
+  padding: 2px 0;
+}
+.wb-fold:hover { color: #b9d2ff; }
+
+.wb-col.folded { flex: none; }
+.wb-col.folded .wb-head { border-bottom: 0; }
+
+.wb-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* 生图面板：面板自身 .dcp-body 会滚动；这里只把它从"抽屉"变成"栏内全宽" */
+.wb-gen .panel-slot { flex: 1; min-height: 0; display: flex; }
+.wb-gen .dcp-panel { position: relative; inset: auto; width: 100%; max-width: none; height: 100%; box-shadow: none; border-left: 0; background: transparent; }
+.wb-gen .dcp-body { padding: 10px 12px 24px; }
+.wb-gen .dcp-head { padding: 8px 12px; }
+
+/* 内嵌的 LLM / 画师页：整栏滚动、去掉页面级留白，收窄侧栏避免在窄列里挤成两列 */
+.wb-llm .wb-body, .wb-art .wb-body { overflow-y: auto; }
+.wb-body > .page { flex: none; overflow: visible; padding: 10px 12px 24px; }
+.wb-llm .llm-layout { flex-direction: column; }
+.wb-llm .llm-side { width: auto; }
+.wb-llm .chat-log { max-height: 34vh; }
+.wb-art .artist-cols { grid-template-columns: minmax(0, 1fr); }
+.wb-art .chip-wrap { max-height: 220px; }
+.wb-art .list-scroll { max-height: 240px; }
+
+/* 滚动条收窄一点，三栏并排时更干净 */
+.wb-body::-webkit-scrollbar, .wb-gen .dcp-body::-webkit-scrollbar, .wb-llm .chat-log::-webkit-scrollbar { width: 8px; height: 8px; }
+.wb-body::-webkit-scrollbar-thumb, .wb-gen .dcp-body::-webkit-scrollbar-thumb, .wb-llm .chat-log::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, .16);
+  border-radius: 4px;
+}
+
+/* ── v1.0.1 面板三栏：生图设置 1 : 提示词 1 : 图片 2 ─────────────────────────
+   DOM 顺序仍是「图片 → 提示词 → 设置」（面板里的几百行 JSX 一行没搬），
+   视觉顺序用 order 调成 设置 → 提示词 → 图片，宽度用 grid-template-columns 的
+   1fr 1fr 2fr 分配。改的只有样式。旧的 .wb-grid / .wb-col 规则留在上面不再命中，
+   因为工作台现在只渲染面板本体（.wb-single）。 */
+.wb-single { flex: 1; min-height: 0; display: block; }
+.wb-single .dcp-panel { width: 100%; }
+
+.dcp-panel.dcp-embedded .dcp-body-3col {
+  display: grid;
+  grid-template-columns: 1fr 1fr 2fr;
+  gap: 10px;
+  align-items: start;
+}
+.dcp-body-3col > .dcp-col {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 9px 10px;
+  border: 1px solid #2a2a35;
+  border-radius: 10px;
+  background: #16161d;
+  max-height: calc(100vh - 200px);
+  overflow: auto;
+}
+.dcp-col-set { order: 1; }
+.dcp-col-prompt { order: 2; }
+.dcp-col-img { order: 3; }
+.dcp-col-head {
+  position: sticky; top: 0; z-index: 2;
+  padding: 2px 2px 6px;
+  font-size: 11px; letter-spacing: .4px; color: #9aa0b4;
+  background: linear-gradient(#16161d, #16161dee);
+  border-bottom: 1px solid #262633;
+}
+/* 图片栏：成图按栏宽自适应，别被固定尺寸卡住 */
+.dcp-col-img .dcp-view { max-width: 100%; }
+.dcp-col-img .dcp-img { max-width: 100%; max-height: 62vh; object-fit: contain; }
+.dcp-col-img .dcp-thumbs { flex-wrap: wrap; }
+
+/* 提示词栏里的宿主插槽（本地 LLM 页 portal 挂进来） */
+.dcp-slot { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.dcp-slot:empty { display: none; }
+.wb-llm-in-slot { min-width: 0; }
+.wb-llm-in-slot .llm-layout { display: flex; flex-direction: column; gap: 8px; }
+.wb-llm-in-slot .llm-main, .wb-llm-in-slot .llm-side { width: 100%; min-width: 0; }
+.wb-llm-in-slot .chat-log { max-height: 34vh; }
+.wb-llm-in-slot .list-scroll { max-height: 30vh; }
+
+/* 布局切换：2 = 收掉生图设置栏；1 = 只留图片栏 */
+.dcp-panel.dcp-layout-2 .dcp-col-set { display: none; }
+.dcp-panel.dcp-layout-2 .dcp-body-3col { grid-template-columns: 1fr 2fr; }
+.dcp-panel.dcp-layout-1 .dcp-col-set,
+.dcp-panel.dcp-layout-1 .dcp-col-prompt { display: none; }
+.dcp-panel.dcp-layout-1 .dcp-body-3col { grid-template-columns: 1fr; }
+
+/* 窄窗口降级：先并成两栏（图片整行），再收成单栏 */
+@media (max-width: 1560px) {
+  .dcp-panel.dcp-embedded .dcp-body-3col { grid-template-columns: 1fr 1fr; }
+  .dcp-col-img { grid-column: 1 / -1; }
+}
+@media (max-width: 1100px) {
+  .dcp-panel.dcp-embedded .dcp-body-3col { grid-template-columns: 1fr; }
+  .dcp-col-img { grid-column: auto; }
+}
+
+/* 工作台里面板的「关闭」按钮没有语义（关不掉工作台），嵌进外壳时隐藏 */
+.dcp-panel.dcp-embedded .dcp-head > button:last-of-type { display: none; }
+/* 图片栏里放大的成图不要被缩略图区挤压 */
+.dcp-col-img .dcp-view { flex: 1 1 auto; }

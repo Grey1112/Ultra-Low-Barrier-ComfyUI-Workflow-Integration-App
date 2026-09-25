@@ -1,0 +1,71 @@
+[
+  {
+    "id": "Qwen3.5-4B-UD-Q4_K_XL",
+    "file": "Qwen3.5-4B-UD-Q4_K_XL.gguf",
+    "bytes": 2912109728,
+    "sha256": "b252c5610a42ca82d20fe2a12813e9d069eed89292907e26c783eeb0bc961bc7",
+    "repo": "unsloth/Qwen3.5-4B-GGUF",
+    "url": "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-UD-Q4_K_XL.gguf",
+    "mirror": "https://hf-mirror.com/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-UD-Q4_K_XL.gguf",
+    "mirrors": [
+      "https://modelscope.cn/models/unsloth/Qwen3.5-4B-GGUF/resolve/master/Qwen3.5-4B-UD-Q4_K_XL.gguf",
+      "https://aifasthub.com/models/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-UD-Q4_K_XL.gguf",
+      "https://hf-mirror.com/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-UD-Q4_K_XL.gguf"
+    ],
+    "page": "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF",
+    "modelscope": true,
+    "license": "Apache-2.0",
+    "licenseNote": "可商用。",
+    "recommended": true,
+    "local": true,
+    "vram": "约 2.7 GB 权重，8 GB 显存绰绰有余（可与 ComfyUI 同时在线）",
+    "note": "本机已装（本地模型已迁移进项目 models/llm）。4B 档在中文理解与显存占用之间最平衡，是本地提示词生成的默认选择。",
+    "verified": "2026-09 迁移后用 hf-mirror 的 LFS sha256 校验一致"
+  },
+  {
+    "id": "Qwen3.5-9B-UD-Q4_K_XL",
+    "file": "Qwen3.5-9B-UD-Q4_K_XL.gguf",
+    "bytes": 5966095584,
+    "sha256": "6f5d30666c2d8ae16a306e616d95341dcf3cc46810df84d7e6f5a7d1e4c1b293",
+    "repo": "unsloth/Qwen3.5-9B-GGUF",
+    "url": "https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/main/Qwen3.5-9B-UD-Q4_K_XL.gguf",
+    "mirror": "https://hf-mirror.com/unsloth/Qwen3.5-9B-GGUF/resolve/main/Qwen3.5-9B-UD-Q4_K_XL.gguf",
+    "mirrors": [
+      "https://modelscope.cn/models/unsloth/Qwen3.5-9B-GGUF/resolve/master/Qwen3.5-9B-UD-Q4_K_XL.gguf",
+      "https://aifasthub.com/models/unsloth/Qwen3.5-9B-GGUF/resolve/main/Qwen3.5-9B-UD-Q4_K_XL.gguf",
+      "https://hf-mirror.com/unsloth/Qwen3.5-9B-GGUF/resolve/main/Qwen3.5-9B-UD-Q4_K_XL.gguf"
+    ],
+    "page": "https://huggingface.co/unsloth/Qwen3.5-9B-GGUF",
+    "modelscope": true,
+    "license": "Apache-2.0",
+    "licenseNote": "可商用。",
+    "recommended": false,
+    "local": false,
+    "vram": "约 5.6 GB 权重，8 GB 显存可跑（实测全量上卡、12.3 秒就绪）",
+    "note": "效果最好的一档：中文理解与常识明显强于 4B。本机未安装（按要求只给链接），需要时从上面的来源页自取。",
+    "verified": "2026-09 实测过 下载 → sha256 校验 → 加载 → 推理 全链路"
+  },
+  {
+    "id": "Qwen3.5-2B-UD-Q5_K_XL",
+    "file": "Qwen3.5-2B-UD-Q5_K_XL.gguf",
+    "bytes": 1466687744,
+    "sha256": "67bff9774bc55e44af2eee3c448dc054478b45c0607858fc6df5b336b55f36f4",
+    "repo": "unsloth/Qwen3.5-2B-GGUF",
+    "url": "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/main/Qwen3.5-2B-UD-Q5_K_XL.gguf",
+    "mirror": "https://hf-mirror.com/unsloth/Qwen3.5-2B-GGUF/resolve/main/Qwen3.5-2B-UD-Q5_K_XL.gguf",
+    "mirrors": [
+      "https://modelscope.cn/models/unsloth/Qwen3.5-2B-GGUF/resolve/master/Qwen3.5-2B-UD-Q5_K_XL.gguf",
+      "https://aifasthub.com/models/unsloth/Qwen3.5-2B-GGUF/resolve/main/Qwen3.5-2B-UD-Q5_K_XL.gguf",
+      "https://hf-mirror.com/unsloth/Qwen3.5-2B-GGUF/resolve/main/Qwen3.5-2B-UD-Q5_K_XL.gguf"
+    ],
+    "page": "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF",
+    "modelscope": true,
+    "license": "Apache-2.0",
+    "licenseNote": "可商用。",
+    "recommended": false,
+    "local": false,
+    "vram": "约 1.4 GB，最省显存（可长期驻留）",
+    "note": "最省资源的一档，质量也最低；适合显存紧张或只想快速试一下。本机未安装（按要求只给链接）。",
+    "verified": "2026-09 用 hf-mirror 的 LFS size/sha256 核对；未在本机加载"
+  }
+]

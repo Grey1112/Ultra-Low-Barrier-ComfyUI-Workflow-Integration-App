@@ -1,0 +1,72 @@
+# ─────────────────────────────────────────────────────────────
+# comfy-panel-standalone .gitignore
+#
+# 目标：「核心版 = git 仓库本身」长期成立 —— 所有运行期数据、运行时、
+# 模型权重、生成物、日志一律不入库；它们由首次运行向导在本地获取/生成。
+# ─────────────────────────────────────────────────────────────
+
+# ── 运行期数据（设置里可能含用户外部绝对路径，绝不入库）──
+data/
+logs/
+
+# ── 随项目携带的运行时（Node / 7-Zip / llama.cpp / ComfyUI 便携包）──
+runtime/
+ComfyUI/
+python_embeded/
+venv/
+custom_nodes/
+
+# ── 模型权重（一律不入库）──
+models/
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+*.onnx
+*.gguf
+*.bin
+
+# ── 压缩包与分卷（便携包 / 模型分片）──
+*.7z
+*.zip
+*.rar
+*.tar
+*.gz
+*.001
+*.part
+
+# ── 分发与构建产物 ──
+release/
+dist/
+build/
+node_modules/
+*.tgz
+
+# ── 生成物、图片与日志 ──
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.gif
+*.ico
+*.log
+*.tmp
+
+# ── 画师作品图片目录（只保留两份 .txt 清单文本与 NOTICE）──
+assets/artists/Anima2B_Artist_top200/
+
+# ── 暂存/开发期目录 ──
+.scratch/
+.staging/
+_staging/
+
+# ── 编辑器与系统文件 ──
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ── 本地覆盖配置（可能含本机路径）──
+*.local.json
+*.local.yml

@@ -1,0 +1,36 @@
+MIT License
+
+Copyright (c) 2026 dsh-comfy-panel contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---------------------------------------------------------------------------
+
+本许可证只覆盖本仓库中属于 dsh-comfy-panel 项目自身的代码与文档
+（plugin/、installer/、preset/、README.md、THIRD_PARTY.md 等）。
+
+本仓库还包含或引用第三方组件，许可各不相同，**本仓库不是单一许可证项目**：
+
+- ComfyUI（GPL-3.0）——不随本仓库分发，由安装脚本从官方源获取
+- Anima 系模型权重（CircleStone Labs 非商业许可 v1.2）——不随本仓库分发，由安装脚本下载
+- Qwen 系模型权重（Apache-2.0，以官方模型卡为准）——不随本仓库分发
+- 画师清单（ThetaCursed/Anima-Style-Explorer，MIT）——**随本仓库分发**，见 data/artists/NOTICE.md
+- comfyui-anima-3-8B 自定义节点（MIT）——可选运行时依赖，不随本仓库分发
+
+逐组件清单与各自义务见 THIRD_PARTY.md，许可全文见 LICENSES/。

@@ -1,0 +1,370 @@
+[
+  {
+    "id": "Anima-3.8B-v1.1",
+    "file": "Anima-3.8B-v1.1.safetensors",
+    "dest": "diffusion_models",
+    "bytes": 8809227318,
+    "sha256": "4a458d26b21efa350073422f756d521b4397d9ca5964da4dc6bd9ae258a29629",
+    "tier": "standard",
+    "license": "CircleStone-NC-1.2",
+    "licenseName": "circlestone-labs-non-commercial-license",
+    "licenseNote": "模型卡未声明 license 字段；作为 Anima 基座的 v2 bundle 扩展，按 CircleStone 非商业许可处理。",
+    "sourceRepo": "lylogummy/Anima-3.8B",
+    "sourcePath": "difussion_models/Anima-3.8B-v1.1.safetensors",
+    "urls": [
+      "https://hf-mirror.com/lylogummy/Anima-3.8B/resolve/main/difussion_models/Anima-3.8B-v1.1.safetensors"
+    ],
+    "officialUrl": "https://huggingface.co/lylogummy/Anima-3.8B/resolve/main/difussion_models/Anima-3.8B-v1.1.safetensors",
+    "verified": {
+      "mirror": {
+        "status": 200,
+        "contentLength": 8809227318,
+        "checkedAt": "2026-09-25"
+      },
+      "official": null
+    },
+    "note": "Anima 3.8B v2 管线主权重（默认文生图）；需 comfyui-anima-3-8B 自定义节点。"
+  },
+  {
+    "id": "anima-turbo-v1.1",
+    "file": "anima-turbo-v1.1.safetensors",
+    "dest": "diffusion_models",
+    "bytes": 4182230656,
+    "sha256": "fba11953276b57edf59d1dc4f1857ac05aa079c56f982b4d7c20298d57d3f7eb",
+    "tier": "minimal",
+    "license": "CircleStone-NC-1.2",
+    "licenseName": "circlestone-labs-non-commercial-license",
+    "licenseNote": "circlestone-labs/Anima 官方权重，仓库声明非商业许可。",
+    "sourceRepo": "circlestone-labs/Anima",
+    "sourcePath": "split_files/diffusion_models/anima-turbo-v1.1.safetensors",
+    "urls": [
+      "https://hf-mirror.com/circlestone-labs/Anima/resolve/main/split_files/diffusion_models/anima-turbo-v1.1.safetensors"
+    ],
+    "mirrors": [
+      "https://modelscope.cn/models/circlestone-labs/Anima/resolve/master/split_files/diffusion_models/anima-turbo-v1.1.safetensors",
+      "https://aifasthub.com/models/circlestone-labs/Anima/resolve/main/split_files/diffusion_models/anima-turbo-v1.1.safetensors",
+      "https://hf-mirror.com/circlestone-labs/Anima/resolve/main/split_files/diffusion_models/anima-turbo-v1.1.safetensors"
+    ],
+    "officialUrl": "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/diffusion_models/anima-turbo-v1.1.safetensors",
+    "verified": {
+      "mirror": {
+        "status": 200,
+        "contentLength": 4182230656,
+        "checkedAt": "2026-09-25"
+      },
+      "official": null,
+      "sources": [
+        { "host": "modelscope.cn", "mbps": 74.7, "firstByteMs": 628, "measuredAt": "2026-09-25", "note": "国内直连最快档；注意默认分支是 master。晚些时候复测同样链路降到 2–7 MB/s（时段性拥塞）" },
+        { "host": "aifasthub.com", "mbps": 85.8, "firstByteMs": 1547, "measuredAt": "2026-09-25", "note": "早前 85.8 MB/s，晚间复测降到 2.19 MB/s" },
+        { "host": "hf-mirror.com", "mbps": 9.7, "firstByteMs": 3645, "measuredAt": "2026-09-25", "note": "能下但被限速，只作兜底" },
+        { "host": "aihub.caict.ac.cn", "ok": false, "reason": "镜像快照（2026-03-17）里没有 anima-turbo-v1.1（只有 anima-preview），LFS batch 对该 oid 不给 download action" },
+        { "host": "ai.gitcode.com", "ok": false, "reason": "镜像停在 2026-02-01 的 commit，目录里只有 anima-preview" },
+        { "host": "hf-api.gitee.com", "ok": false, "reason": "同上，Entry not found" },
+        { "host": "aliendao.cn", "ok": false, "reason": "只服务已缓存仓库，该仓库不存在" },
+        { "host": "wisemodel.cn", "ok": false, "reason": "未托管该仓库" }
+      ]
+    },
+    "note": "Anima 通用管线，快速草图（面板默认 CFG 1 / 10 步）。"
+  },
+  {
+    "id": "anima-base-v1.0",
+    "file": "anima-base-v1.0.safetensors",
+    "dest": "diffusion_models",
+    "bytes": 4182218328,
+    "sha256": "bd43b7cffe1ed1153d9c41e7beb2f18cb1273eafbaa3af3edd6a173dc90a006e",
+    "tier": "standard",
+    "license": "CircleStone-NC-1.2",
+    "licenseName": "circlestone-labs-non-commercial-license",
+    "licenseNote": "circlestone-labs/Anima 官方基座，仓库声明非商业许可。",
+    "sourceRepo": "circlestone-labs/Anima",
+    "sourcePath": "split_files/diffusion_models/anima-base-v1.0.safetensors",
+    "urls": [
+      "https://hf-mirror.com/circlestone-labs/Anima/resolve/main/split_files/diffusion_models/anima-base-v1.0.safetensors"
+    ],
+    "officialUrl": "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/diffusion_models/anima-base-v1.0.safetensors",
+    "verified": {
+      "mirror": {
+        "status": 200,
+        "contentLength": 4182218328,
+        "checkedAt": "2026-09-25"
+      },
+      "official": null
+    },
+    "note": "Anima 通用管线官方基座（画风最中性）。"
+  },
+  {
+    "id": "anima-aesthetic-v1.1",
+    "file": "anima-aesthetic-v1.1.safetensors",
+    "dest": "diffusion_models",
+    "bytes": 4182230656,
+    "sha256": "3c1868387a3a1ff504bbb87c33678321965ead381fcf87afbd0264daa600c082",
+    "tier": "standard",
+    "license": "CircleStone-NC-1.2",
+    "licenseName": "circlestone-labs-non-commercial-license",
+    "licenseNote": "circlestone-labs/Anima 官方美学版，仓库声明非商业许可。",
+    "sourceRepo": "circlestone-labs/Anima",
+    "sourcePath": "split_files/diffusion_models/anima-aesthetic-v1.1.safetensors",
+    "urls": [
+      "https://hf-mirror.com/circlestone-labs/Anima/resolve/main/split_files/diffusion_models/anima-aesthetic-v1.1.safetensors"
+    ],
+    "officialUrl": "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/diffusion_models/anima-aesthetic-v1.1.safetensors",
+    "verified": {
+      "mirror": {
+        "status": 200,
+        "contentLength": 4182230656,
+        "checkedAt": "2026-09-25"
+      },
+      "official": null
+    },
+    "note": "Anima 通用管线官方美学版（禁用 score_* 标签）。"
+  },
+  {
+    "id": "Anima-2.9B-preview-v1",
+    "file": "Anima-2.9B-preview-v1.safetensors",
+    "dest": "diffusion_models",
+    "bytes": 5843204206,
+    "sha256": "0b3020d1b906155f7eb30667622723e87160632c8c7a5f1c93bdce685f2a346d",
+    "tier": "full",
+    "license": "CircleStone-NC-1.2",
+    "licenseName": "circlestone-labs-non-commercial-license",
+    "licenseNote": "Anima 基座衍生模型，模型卡标注同一非商业许可。",
+    "sourceRepo": "Gazingstars123/Anima-2.9B",
+    "sourcePath": "Anima-2.9B-preview-v1.safetensors",
+    "urls": [
+      "https://hf-mirror.com/Gazingstars123/Anima-2.9B/resolve/main/Anima-2.9B-preview-v1.safetensors"
+    ],
+    "officialUrl": "https://huggingface.co/Gazingstars123/Anima-2.9B/resolve/main/Anima-2.9B-preview-v1.safetensors",
+    "verified": {
+      "mirror": {
+        "status": 200,
+        "contentLength": 5843204206,
+        "checkedAt": "2026-09-25"
+      },
+      "official": null
+    },
+    "note": "Anima 通用管线 2.9B 预览版（40 层扩展）。"
+  },
+  {
+    "id": "Anima-2.9B-preview-v1_int8_convrot",
+    "file": "Anima-2.9B-preview-v1_int8_convrot.safetensors",
+    "dest": "diffusion_models",
+    "bytes": 3082486758,
+    "sha256": "cfb6ee2dde085de2b1c52b3fbe098dbc8c9ebd24f290c59755ab2c5f9291d396",
+    "tier": "full",
+    "license": "CircleStone-NC-1.2",
+    "licenseName": "circlestone-labs-non-commercial-license",
+    "licenseNote": "Anima 基座衍生模型的 int8 量化版（已修改），同一非商业许可；不得暗示官方背书。",
+    "sourceRepo": "Gazingstars123/Anima-2.9B",
+    "sourcePath": "Anima-2.9B-preview-v1_int8_convrot.safetensors",
+    "urls": [
+      "https://hf-mirror.com/Gazingstars123/Anima-2.9B/resolve/main/Anima-2.9B-preview-v1_int8_convrot.safetensors"
+    ],
+    "officialUrl": "https://huggingface.co/Gazingstars123/Anima-2.9B/resolve/main/Anima-2.9B-preview-v1_int8_convrot.safetensors",
+    "verified": {
+      "mirror": {
+        "status": 200,
+        "contentLength": 3082486758,
+        "checkedAt": "2026-09-25"
+      },
+      "official": null
+    },
+    "note": "同上 int8 量化版（8 GB 显存友好）。"
+  },
+  {
+    "id": "qwen_image_2.1_int8_convrot",
+    "file": "qwen_image_2.1_int8_convrot.safetensors",
+    "dest": "diffusion_models",
+    "bytes": 7256783064,
+    "sha256": "cb74113cb03faecd79611b01fd7fd642f0aa60d6f0b95086abee214d75eaa57d",
+    "tier": "full",
+    "license": "Qwen-Research",
+    "licenseName": "qwen-research",
+    "licenseNote": "Qwen-Image 2.1 扩散权重（int8 量化再打包）。证据：Comfy-Org/Qwen-Image-2.1 模型卡 license: other / license_name: qwen-research（https://hf-mirror.com/Comfy-Org/Qwen-Image-2.1），其 base_model Qwen/Qwen-Image-2.1 卡片同为 qwen-research（https://hf-mirror.com/Qwen/Qwen-Image-2.1）。仅研究/非商业用途；商用须单独向 Qwen 取得授权。",
+    "sourceRepo": "Comfy-Org/Qwen-Image-2.1",
+    "sourcePath": "diffusion_models/qwen_image_2.1_int8_convrot.safetensors",
+    "urls": [
+      "https://hf-mirror.com/Comfy-Org/Qwen-Image-2.1/resolve/main/diffusion_models/qwen_image_2.1_int8_convrot.safetensors"
+    ],
+    "officialUrl": "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main/diffusion_models/qwen_image_2.1_int8_convrot.safetensors",
+    "verified": {
+      "mirror": {
+        "status": 200,
+        "contentLength": 7256783064,
+        "checkedAt": "2026-09-25"
+      },
+      "official": null
+    },
+    "note": "Qwen-Image 2.1 管线主权重（int8 量化）。"
+  },
+  {
+    "id": "qwen_3_06b_base",
+    "file": "qwen_3_06b_base.safetensors",
+    "dest": "text_encoders",
+    "bytes": 1192135096,
+    "sha256": "cd2a512003e2f9f3cd3c32a9c3573f820bb28c940f73c57b1ddaa983d9223eba",
+    "tier": "minimal",
+    "license": "CircleStone-NC-1.2",
+    "licenseName": "circlestone-labs-non-commercial-license",
+    "licenseNote": "内容为 Qwen3-0.6B（上游模型卡 license: apache-2.0，证据 https://hf-mirror.com/Qwen/Qwen3-0.6B），但本安装器从 circlestone-labs/Anima 仓库 split_files/text_encoders 下载，仓库整体适用 CircleStone 非商业许可 v1.2 → 按更严格的仓库许可对待，两处声明都需遵守。",
+    "sourceRepo": "circlestone-labs/Anima",
+    "sourcePath": "split_files/text_encoders/qwen_3_06b_base.safetensors",
+    "urls": [
+      "https://hf-mirror.com/circlestone-labs/Anima/resolve/main/split_files/text_encoders/qwen_3_06b_base.safetensors"
+    ],
+    "mirrors": [
+      "https://modelscope.cn/models/circlestone-labs/Anima/resolve/master/split_files/text_encoders/qwen_3_06b_base.safetensors",
+      "https://ai.gitcode.com/hf_mirrors/circlestone-labs/Anima/resolve/main/split_files/text_encoders/qwen_3_06b_base.safetensors",
+      "https://hf-api.gitee.com/circlestone-labs/Anima/resolve/main/split_files/text_encoders/qwen_3_06b_base.safetensors",
+      "https://aifasthub.com/models/circlestone-labs/Anima/resolve/main/split_files/text_encoders/qwen_3_06b_base.safetensors",
+      "https://hf-mirror.com/circlestone-labs/Anima/resolve/main/split_files/text_encoders/qwen_3_06b_base.safetensors"
+    ],
+    "fastMirrors": [
+      "https://ai.gitcode.com/hf_mirrors/circlestone-labs/Anima/resolve/main/split_files/text_encoders/qwen_3_06b_base.safetensors",
+      "https://modelscope.cn/models/circlestone-labs/Anima/resolve/master/split_files/text_encoders/qwen_3_06b_base.safetensors",
+      "https://hf-api.gitee.com/circlestone-labs/Anima/resolve/main/split_files/text_encoders/qwen_3_06b_base.safetensors"
+    ],
+    "officialUrl": "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/text_encoders/qwen_3_06b_base.safetensors",
+    "verified": {
+      "mirror": {
+        "status": 200,
+        "contentLength": 1192135096,
+        "checkedAt": "2026-09-25"
+      },
+      "official": null,
+      "sources": [
+        { "host": "ai.gitcode.com", "mbps": 20.4, "firstByteMs": 142, "measuredAt": "2026-09-25", "note": "旧快照但含该文件；resolve 端按 IP 限流 429，需退避" },
+        { "host": "aihub.caict.ac.cn", "mbps": 15.45, "firstByteMs": 350, "measuredAt": "2026-09-25", "note": "需先做 LFS batch POST 换签名直链（未在代码里实现，见 docs/FULL-REFERENCE.md）" },
+        { "host": "modelscope.cn", "mbps": 14.99, "firstByteMs": 115, "measuredAt": "2026-09-25" },
+        { "host": "hf-api.gitee.com", "mbps": 5.79, "firstByteMs": 100, "measuredAt": "2026-09-25" },
+        { "host": "aifasthub.com", "mbps": 1.18, "firstByteMs": 7668, "measuredAt": "2026-09-25", "note": "本轮实测明显变慢（早前 90 MB/s），只作兜底" },
+        { "host": "hf-mirror.com", "mbps": 4.8, "firstByteMs": 2968, "measuredAt": "2026-09-25", "note": "限速，仅兜底" }
+      ]
+    },
+    "note": "Anima 原生文本编码器（1024 维）。"
+  },
+  {
+    "id": "qwen35_4b",
+    "file": "qwen35_4b.safetensors",
+    "dest": "text_encoders",
+    "bytes": 4779016600,
+    "sha256": "ea289be7c916726d09953c7db9971c82b280e694b5d7c47f8ad9ffad6acb54ba",
+    "tier": "standard",
+    "license": "CircleStone-NC-1.2",
+    "licenseName": "circlestone-labs-non-commercial-license",
+    "licenseNote": "内容为 Qwen3.5-4B（上游模型卡 license: apache-2.0，证据 https://hf-mirror.com/Qwen/Qwen3.5-4B）；但本安装器从 lylogummy/Anima-3.8B 仓库下载，该仓库未声明许可元数据且系 Anima 衍生品 → 按 CircleStone 非商业许可保守处理，两处声明都需遵守。",
+    "sourceRepo": "lylogummy/Anima-3.8B",
+    "sourcePath": "text_encoders/qwen35_4b.safetensors",
+    "urls": [
+      "https://hf-mirror.com/lylogummy/Anima-3.8B/resolve/main/text_encoders/qwen35_4b.safetensors"
+    ],
+    "officialUrl": "https://huggingface.co/lylogummy/Anima-3.8B/resolve/main/text_encoders/qwen35_4b.safetensors",
+    "verified": {
+      "mirror": {
+        "status": 200,
+        "contentLength": 4779016600,
+        "checkedAt": "2026-09-25"
+      },
+      "official": null
+    },
+    "note": "Anima 3.8B 语义编码器（AnimaQwen35Loader）。"
+  },
+  {
+    "id": "qwen3vl_8b_w4a8",
+    "file": "qwen3vl_8b_w4a8.safetensors",
+    "dest": "text_encoders",
+    "bytes": 6312105364,
+    "sha256": "7754425e55e7bea2bfde4dde59a4cc236cb44e5ee9c215ea66ef8d47012824eb",
+    "tier": "full",
+    "license": "Qwen-Research",
+    "licenseName": "qwen-research",
+    "licenseNote": "按打包仓库许可标注：随 Comfy-Org/Qwen-Image-2.1 仓库分发 → Qwen Research（https://hf-mirror.com/Comfy-Org/Qwen-Image-2.1）。其底层模型 Qwen/Qwen3-VL-8B-Instruct 模型卡为 license: apache-2.0（https://hf-mirror.com/Qwen/Qwen3-VL-8B-Instruct）；本文件按更严格的打包仓库许可对待。",
+    "sourceRepo": "Comfy-Org/Qwen-Image-2.1",
+    "sourcePath": "text_encoders/qwen3vl_8b_w4a8.safetensors",
+    "urls": [
+      "https://hf-mirror.com/Comfy-Org/Qwen-Image-2.1/resolve/main/text_encoders/qwen3vl_8b_w4a8.safetensors"
+    ],
+    "officialUrl": "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main/text_encoders/qwen3vl_8b_w4a8.safetensors",
+    "verified": {
+      "mirror": {
+        "status": 200,
+        "contentLength": 6312105364,
+        "checkedAt": "2026-09-25"
+      },
+      "official": null
+    },
+    "note": "Qwen-Image 2.1 文本编码器（4096 维）。"
+  },
+  {
+    "id": "qwen_image_vae",
+    "file": "qwen_image_vae.safetensors",
+    "dest": "vae",
+    "bytes": 253806246,
+    "sha256": "a70580f0213e67967ee9c95f05bb400e8fb08307e017a924bf3441223e023d1f",
+    "tier": "minimal",
+    "license": "CircleStone-NC-1.2",
+    "licenseName": "circlestone-labs-non-commercial-license",
+    "licenseNote": "内容源自 Qwen-Image 系（上游 Qwen/Qwen-Image 模型卡为 license: apache-2.0，https://hf-mirror.com/Qwen/Qwen-Image），但本安装器从 circlestone-labs/Anima 仓库 split_files/vae 下载，该仓库整体适用 CircleStone 非商业许可 v1.2（https://hf-mirror.com/circlestone-labs/Anima/raw/main/LICENSE.md）。两处上游声明都需遵守；本项目不随仓库分发权重。",
+    "sourceRepo": "circlestone-labs/Anima",
+    "sourcePath": "split_files/vae/qwen_image_vae.safetensors",
+    "urls": [
+      "https://hf-mirror.com/circlestone-labs/Anima/resolve/main/split_files/vae/qwen_image_vae.safetensors"
+    ],
+    "mirrors": [
+      "https://modelscope.cn/models/circlestone-labs/Anima/resolve/master/split_files/vae/qwen_image_vae.safetensors",
+      "https://ai.gitcode.com/hf_mirrors/circlestone-labs/Anima/resolve/main/split_files/vae/qwen_image_vae.safetensors",
+      "https://hf-api.gitee.com/circlestone-labs/Anima/resolve/main/split_files/vae/qwen_image_vae.safetensors",
+      "https://www.modelscope.cn/models/circlestone-labs/Anima/resolve/master/split_files/vae/qwen_image_vae.safetensors",
+      "https://aifasthub.com/models/circlestone-labs/Anima/resolve/main/split_files/vae/qwen_image_vae.safetensors",
+      "https://hf-mirror.com/circlestone-labs/Anima/resolve/main/split_files/vae/qwen_image_vae.safetensors"
+    ],
+    "fastMirrors": [
+      "https://ai.gitcode.com/hf_mirrors/circlestone-labs/Anima/resolve/main/split_files/vae/qwen_image_vae.safetensors",
+      "https://modelscope.cn/models/circlestone-labs/Anima/resolve/master/split_files/vae/qwen_image_vae.safetensors",
+      "https://hf-api.gitee.com/circlestone-labs/Anima/resolve/main/split_files/vae/qwen_image_vae.safetensors"
+    ],
+    "officialUrl": "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/vae/qwen_image_vae.safetensors",
+    "verified": {
+      "mirror": {
+        "status": 200,
+        "contentLength": 253806246,
+        "checkedAt": "2026-09-25"
+      },
+      "official": null,
+      "sources": [
+        { "host": "ai.gitcode.com", "mbps": 17.27, "firstByteMs": 152, "measuredAt": "2026-09-25", "note": "全量下载后 sha256 一致" },
+        { "host": "modelscope.cn", "mbps": 16.04, "firstByteMs": 80, "measuredAt": "2026-09-25", "note": "全量下载后 sha256 一致" },
+        { "host": "www.modelscope.cn", "mbps": 14.58, "firstByteMs": 42, "measuredAt": "2026-09-25", "note": "与 modelscope.cn 同一后端 CDN" },
+        { "host": "hf-api.gitee.com", "mbps": 7.0, "firstByteMs": 89, "measuredAt": "2026-09-25", "note": "全量下载后 sha256 一致" },
+        { "host": "aifasthub.com", "mbps": 1.73, "firstByteMs": 4316, "measuredAt": "2026-09-25", "note": "本轮变慢，仅兜底" },
+        { "host": "hf-mirror.com", "mbps": 1.2, "firstByteMs": 3451, "measuredAt": "2026-09-25", "note": "限速严重，仅兜底" }
+      ]
+    },
+    "note": "Anima / Qwen-Image 系 VAE（16 通道潜空间）。"
+  },
+  {
+    "id": "qwen_image_2.1_vae_bf16",
+    "file": "qwen_image_2.1_vae_bf16.safetensors",
+    "dest": "vae",
+    "bytes": 675509688,
+    "sha256": "bb21f7473051e1ac368515dd3f2e15cd44d7a11748ee8823e1ddca3e4876b7c9",
+    "tier": "full",
+    "license": "Qwen-Research",
+    "licenseName": "qwen-research",
+    "licenseNote": "Qwen-Image 2.1 VAE，随 Comfy-Org/Qwen-Image-2.1 仓库分发（该仓库 license_name: qwen-research）。仅研究/非商业用途；商用须单独授权。",
+    "sourceRepo": "Comfy-Org/Qwen-Image-2.1",
+    "sourcePath": "vae/qwen_image_2.1_vae_bf16.safetensors",
+    "urls": [
+      "https://hf-mirror.com/Comfy-Org/Qwen-Image-2.1/resolve/main/vae/qwen_image_2.1_vae_bf16.safetensors"
+    ],
+    "officialUrl": "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main/vae/qwen_image_2.1_vae_bf16.safetensors",
+    "verified": {
+      "mirror": {
+        "status": 200,
+        "contentLength": 675509688,
+        "checkedAt": "2026-09-25"
+      },
+      "official": null
+    },
+    "note": "Qwen-Image 2.1 VAE（64 通道潜空间）。"
+  }
+]
