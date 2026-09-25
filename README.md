@@ -1,5 +1,7 @@
 # 超低门槛 ComfyUI 工作流集成应用（comfy-panel-standalone）
 
+> **语言 / Language**：**简体中文** · [English](README.en.md)
+
 > 本文档面向**使用者与二次分发者**：说明这是什么、怎么装起来、怎么生图、出问题怎么查。
 >
 > **一句话定位**：一个**不依赖 DSH** 的本地 ComfyUI 工作流集成应用 —— 自带 Node 后端与浏览器 Web UI，**拷贝整个项目文件夹即完成迁移**，**零 npm 依赖**（只用 Node 标准库）。
@@ -844,6 +846,7 @@ http://<本机IP>:8788/?token=<令牌>
 | [THIRD_PARTY.md](THIRD_PARTY.md) | 第三方组件清单、各自许可、分发义务与不确定点 | ✅ 是 |
 | [LICENSES/](LICENSES/) | 各上游许可全文与 `LICENSES/README.md` 索引 | ✅ 是 |
 | [AI-DECLARATION.md](AI-DECLARATION.md) | **AI 生成声明**：本项目自身全部代码与文档由 AI 生成；第三方边界、免责与"以实测记录为准"的指引 | ✅ 是 |
+| [README.en.md](README.en.md) | 本文档的英文版（完整对译；章节目录与本文一一对应） | ✅ 是 |
 
 > 四份交付文档（本文、`FEATURES.md`、`docs/FULL-REFERENCE.md`、`MIGRATION.md`）都在 `scripts/build-core.ps1` 的核心版打包白名单里，随核心版一起交付；
 > `docs/HANDOVER.md` 与 `docs/INTERNAL-CONTRACT.md` 在 `docs/` 目录内，同样随核心版交付（交接文档已做去标识化，不含任何真实机器路径/用户名）。

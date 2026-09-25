@@ -33,7 +33,7 @@ $CoreDir = Join-Path $Root 'release\core'
 
 # 顶层白名单：核心版 = 这些目录/文件的干净拷贝（其余一律不拷）
 $IncludeDirs = @('server', 'web', 'scripts', 'assets', 'installer', 'docs', 'LICENSES')
-$IncludeFiles = @('start.cmd', 'README.md', 'FEATURES.md', 'MIGRATION.md', 'LICENSE', 'THIRD_PARTY.md', 'AI-DECLARATION.md', '.gitignore', '.gitattributes', 'package.json')
+$IncludeFiles = @('start.cmd', 'README.md', 'README.en.md', 'FEATURES.md', 'MIGRATION.md', 'LICENSE', 'THIRD_PARTY.md', 'AI-DECLARATION.md', '.gitignore', '.gitattributes', 'package.json')
 
 # 这些名字一旦出现在拷贝结果里就是错误（运行期数据 / 权重 / 运行时）
 $ForbiddenNames = @('runtime', 'models', 'data', 'logs', 'dist', 'release', 'node_modules', '.scratch')
@@ -130,14 +130,14 @@ function Scan-Core {
         $gplHits | Select-Object -First 10 | ForEach-Object { Write-Host ("   " + $_) -ForegroundColor Yellow }
     } else { Write-Ok "GPL 代码内联扫描：零命中（注释里引用 ComfyUI 源码路径作为证据不算内联）" }
 
-    # ③ 交付文档齐全（四份交付文档 + 交接/契约文档 + AI 生成声明）
-    $docs = @('README.md', 'FEATURES.md', 'MIGRATION.md', 'docs\FULL-REFERENCE.md', 'docs\HANDOVER.md', 'docs\INTERNAL-CONTRACT.md', 'AI-DECLARATION.md')
+    # ③ 交付文档齐全（四份交付文档 + 交接/契约文档 + AI 生成声明 + 英文 README）
+    $docs = @('README.md', 'README.en.md', 'FEATURES.md', 'MIGRATION.md', 'docs\FULL-REFERENCE.md', 'docs\HANDOVER.md', 'docs\INTERNAL-CONTRACT.md', 'AI-DECLARATION.md')
     $missing = @()
     foreach ($d in $docs) { if (-not (Test-Path (Join-Path $CoreDir $d))) { $missing += $d } }
     if ($missing.Count -gt 0) {
         Write-Err2 ("文档缺失：" + ($missing -join '、'))
         $fail++
-    } else { Write-Ok "交付文档齐全（含 AI-DECLARATION.md）" }
+    } else { Write-Ok "交付文档齐全（含 README.en.md 与 AI-DECLARATION.md）" }
 
     # ④ 语法自检（核心版必须能直接跑）
     $node = Get-Command node -ErrorAction SilentlyContinue

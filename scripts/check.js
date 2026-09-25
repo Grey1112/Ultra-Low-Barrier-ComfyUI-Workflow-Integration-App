@@ -133,7 +133,7 @@ for (const f of cmds) {
 // ⑤ 脱敏
 console.log('\n[5] 交付物脱敏（零真实机器路径/用户名）');
 const scanDirs = ['server', 'web', 'scripts', 'docs', 'assets', 'installer'];
-const scanFiles = ['README.md', 'FEATURES.md', 'MIGRATION.md', 'THIRD_PARTY.md', 'AI-DECLARATION.md', 'package.json', '.gitignore', 'start.cmd'];
+const scanFiles = ['README.md', 'README.en.md', 'FEATURES.md', 'MIGRATION.md', 'THIRD_PARTY.md', 'AI-DECLARATION.md', 'package.json', '.gitignore', 'start.cmd'];
 const skipExt = new Set(['.png', '.jpg', '.jpeg', '.webp', '.ico', '.woff2', '.gguf', '.safetensors']);
 const patterns = [
   // 注意：这些是**正则字面量**，`\\` 才是"一个字面反斜杠"；写成 `\\\\` 会要求两个反斜杠，
