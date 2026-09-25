@@ -88,6 +88,7 @@
     "settings.listen.port": "Port",
     "settings.listen.lan": "Allow LAN access",
     "settings.listen.lan.hint": "LAN access requires the X-DCP-Token header",
+    "settings.listen.lanEnabled": "LAN access is now on: later requests from this page need the token, so reopen the page with the ?token= URL (the token is shown below)",
     "settings.download.title": "Download sources",
     "settings.download.officialTimeout": "Official source timeout (ms)",
     "settings.download.slowThreshold": "Slow threshold (KB/s)",

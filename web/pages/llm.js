@@ -263,12 +263,22 @@ export default function LlmPage(props) {
 
   // ── 会话 / 流式回复 ─────────────────────────────────────
 
-  const notReady = !!(runtime && runtime.runtime && runtime.runtime.ok === false);
+  // v1.1.0（修复 B6）：就绪度必须按「推理来源」判定。产品默认来源是外接 API，而旧实现只看本地
+  // llama.cpp 运行时 → provider 恒读不到（/app/state 不下发）→ 永远走本地分支 → 一条消息都发不出。
+  // api：baseUrl+model 齐（api.ok）且填了 Key 才可发；local：才要求运行时在位。
+  const provider = (runtime && runtime.provider) || 'local';
+  const isApiProvider = provider === 'api';
+  const notReady = isApiProvider
+    ? !(runtime && runtime.api && runtime.api.ok && runtime.api.hasKey)
+    : !!(runtime && runtime.runtime && runtime.runtime.ok === false);
+  const notReadyMsg = isApiProvider
+    ? ((runtime && runtime.api && runtime.api.ok) ? t('llm.provider.apiNeedKey') : t('llm.provider.apiMissing'))
+    : t('llm.error.notReady');
 
   const send = useCallback(async () => {
     const text = draft.trim();
     if (!text || streaming) return;
-    if (notReady) { setErr(t('llm.error.notReady')); toast && toast(t('llm.error.notReady'), 'error'); return; }
+    if (notReady) { setErr(notReadyMsg); toast && toast(notReadyMsg, 'error'); return; }
 
     setDraft('');
     setErr('');
@@ -408,7 +418,7 @@ export default function LlmPage(props) {
       streamCtl.current = null;
       if (mounted.current) setStreaming(false);
     }
-  }, [api, draft, fail, messages, notReady, streaming, toast, t]);
+  }, [api, draft, fail, messages, notReady, notReadyMsg, streaming, toast, t]);
 
   const newSession = useCallback(async () => {
     try {

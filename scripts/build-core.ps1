@@ -33,7 +33,7 @@ $CoreDir = Join-Path $Root 'release\core'
 
 # 顶层白名单：核心版 = 这些目录/文件的干净拷贝（其余一律不拷）
 $IncludeDirs = @('server', 'web', 'scripts', 'assets', 'installer', 'docs', 'LICENSES')
-$IncludeFiles = @('start.cmd', 'README.md', 'FEATURES.md', 'MIGRATION.md', 'LICENSE', 'THIRD_PARTY.md', '.gitignore', '.gitattributes', 'package.json')
+$IncludeFiles = @('start.cmd', 'README.md', 'FEATURES.md', 'MIGRATION.md', 'LICENSE', 'THIRD_PARTY.md', 'AI-DECLARATION.md', '.gitignore', '.gitattributes', 'package.json')
 
 # 这些名字一旦出现在拷贝结果里就是错误（运行期数据 / 权重 / 运行时）
 $ForbiddenNames = @('runtime', 'models', 'data', 'logs', 'dist', 'release', 'node_modules', '.scratch')
@@ -130,14 +130,14 @@ function Scan-Core {
         $gplHits | Select-Object -First 10 | ForEach-Object { Write-Host ("   " + $_) -ForegroundColor Yellow }
     } else { Write-Ok "GPL 代码内联扫描：零命中（注释里引用 ComfyUI 源码路径作为证据不算内联）" }
 
-    # ③ 四份文档齐全
-    $docs = @('README.md', 'FEATURES.md', 'MIGRATION.md', 'docs\FULL-REFERENCE.md')
+    # ③ 交付文档齐全（四份交付文档 + 交接/契约文档 + AI 生成声明）
+    $docs = @('README.md', 'FEATURES.md', 'MIGRATION.md', 'docs\FULL-REFERENCE.md', 'docs\HANDOVER.md', 'docs\INTERNAL-CONTRACT.md', 'AI-DECLARATION.md')
     $missing = @()
     foreach ($d in $docs) { if (-not (Test-Path (Join-Path $CoreDir $d))) { $missing += $d } }
     if ($missing.Count -gt 0) {
         Write-Err2 ("文档缺失：" + ($missing -join '、'))
         $fail++
-    } else { Write-Ok "四份文档齐全" }
+    } else { Write-Ok "交付文档齐全（含 AI-DECLARATION.md）" }
 
     # ④ 语法自检（核心版必须能直接跑）
     $node = Get-Command node -ErrorAction SilentlyContinue
@@ -171,7 +171,10 @@ if ($GitInit) {
         try {
             if (-not (Test-Path (Join-Path $CoreDir '.git'))) { & $git.Source init -q }
             & $git.Source add -A
-            & $git.Source -c user.name='comfy-panel-standalone' -c user.email='noreply@example.com' commit -q -m 'chore: comfy-panel-standalone core v1.0.0' 2>$null
+            # 提交身份一律沿用本机 git 全局配置。切勿在此写死占位身份：
+            # 曾用 -c user.name='comfy-panel-standalone' -c user.email='noreply@example.com' 覆盖，
+            # 导致 GitHub 把提交错算给无关账号（该邮箱被他人账号占用）。
+            & $git.Source commit -q -m 'chore: comfy-panel-standalone core v1.1.0' 2>$null
             $tracked = (& $git.Source ls-files | Measure-Object).Count
             Write-Ok ("git 仓库就绪，已跟踪文件数：" + $tracked)
             $suspicious = & $git.Source ls-files | Select-String -Pattern '\.(safetensors|gguf|ckpt|pt|pth|onnx|7z|zip)$'

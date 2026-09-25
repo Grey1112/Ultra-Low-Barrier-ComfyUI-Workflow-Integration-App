@@ -663,7 +663,12 @@ async function runSetup(job, opts) {
     comfySource: opts.comfySource?.kind || 'portable',
     comfyDir: mode === 'external' ? (opts.externalDir || '') : paths.comfyEmbedded,
     modelsDir: modelsDirFor(mode, opts.externalDir),
-    models: (result.steps.models && result.steps.models.installed) || [],
+    // v1.1.0（修复 B5）：已就绪而被跳过的权重同样要记账 —— 硬链接导入本机已有 ComfyUI 时
+    // 模型全部走 skipped 分支，旧写法只落 installed，于是 setup.json 的 models 为空，
+    // 向导页看起来"一个都没装"。
+    models: result.steps.models
+      ? [...new Set([...(result.steps.models.installed || []), ...(result.steps.models.skipped || [])])]
+      : [],
     artists: !skip.artists,
     licenses: !skip.licenses,
   });

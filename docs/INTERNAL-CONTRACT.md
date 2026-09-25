@@ -1,4 +1,4 @@
-# 内部接口契约（comfy-panel-standalone v1.0.0）
+# 内部接口契约（comfy-panel-standalone v1.1.0）
 
 > 本文件是前端与后端的冻结契约。改动必须同步更新本文件。
 > 脱敏要求：本文件与全部交付物**不得出现任何真实机器路径**（示例一律用占位符）。
@@ -7,6 +7,10 @@
 
 - 后端：Node 标准库，零 npm 依赖。入口 `server/index.js`。
 - 默认监听 `127.0.0.1:8788`（设置可改）；`lan=true` 时监听 `0.0.0.0` 并要求 `X-DCP-Token`。
+  **回环来源放行**（`req.socket.remoteAddress` ∈ `127.0.0.1` / `::1` / `::ffff:127.0.0.1`）：令牌是给局域网内**其它设备**的；
+  本机自己的页面与启动器探活（`scripts/start.ps1` 用 `http://127.0.0.1:<port>/app/state` 且不带令牌）必须放行 ——
+  否则开启局域网后本页所有 `/app/*` 立刻 401（外壳会把整页换成"后端 API 不可用"，令牌反而看不到），
+  且下次双击 `start.cmd` 会因探活 401 等满 60 秒后判定"后端没就绪"并杀掉后端（v1.1.0 修复）。
 - 静态资源：`GET /` → `web/index.html`；`GET /static/<path>` → `web/<path>`（禁止 `..`）。
 - 面板兼容前缀 `/comfy-panel/*` 完全保留（panel.js 零改动即可工作）。
 
@@ -75,7 +79,7 @@ export default function SettingsPage({ api, t, state, refresh, toast }) { /* ...
 ### 状态
 | 方法 | 路径 | 返回 |
 |---|---|---|
-| GET | `/app/state` | `{version, buildTag, lang, root, comfy:{mode,dir,port,online,running,pid}, llm:{runtime:{ok,source,exe}, model, server:{running,port}}, setup:{completed, runtime, comfyui, models, artists, llm}, selfcheck:{ok, issues:[]}}` |
+| GET | `/app/state` | `{version, buildTag, lang, root, comfy:{mode,dir,port,online,running,pid}, llm:{runtime:{ok,source,exe}, model, modelCount, server:{running,port}, contextMessages, sendContext, keepMessages, reasoning, **provider:"local\|api"**, **api:{ok,baseUrl,model,hasKey,missing}**}, **listen:{lan,port,token}**, setup:{completed, runtime, comfyui, models, artists, llm}, selfcheck:{ok, issues:[]}}`（三处加粗字段为 v1.1.0 补齐：前端按推理来源判定"能不能发消息"、顶栏徽标显示实际来源、设置页读取局域网令牌都依赖它们） |
 | GET | `/app/selfcheck` | `{ok, issues:[{code,level,message,fix,path?}], external:[{key,path,exists}]}` |
 | GET | `/app/settings` | 设置全量 |
 | PUT | `/app/settings` | 部分更新（深合并），返回更新后设置 |

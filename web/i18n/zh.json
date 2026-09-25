@@ -88,6 +88,7 @@
     "settings.listen.port": "端口",
     "settings.listen.lan": "允许局域网访问",
     "settings.listen.lan.hint": "局域网访问需要 X-DCP-Token 请求头",
+    "settings.listen.lanEnabled": "已开启局域网：本页之后的请求都需要令牌，请改用「带 ?token= 的地址」重新打开（令牌见下方）",
     "settings.download.title": "下载源",
     "settings.download.officialTimeout": "官方源超时（毫秒）",
     "settings.download.slowThreshold": "慢速阈值（KB/s）",

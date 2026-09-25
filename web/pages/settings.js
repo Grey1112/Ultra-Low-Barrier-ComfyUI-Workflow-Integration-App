@@ -19,6 +19,7 @@ export default function SettingsPage(props) {
   const s = settings || {};
   const [comfy, setComfy] = useState(s.comfy || { mode: 'embedded', dir: '', port: 8188, autoStart: false, extraArgs: [] });
   const [listen, setListen] = useState(s.listen || { host: '127.0.0.1', port: 8788, lan: false });
+  const [freshToken, setFreshToken] = useState('');   // v1.1.0：本次保存刚生成的局域网令牌（见 lanToken）
   const [download, setDownload] = useState(s.download || {});
   const [llm, setLlm] = useState(s.llm || { contextMessages: 5, port: 8199, ctxSize: 8192 });
   const [apiCfg, setApiCfg] = useState((s.llm && s.llm.api) || { baseUrl: '', apiKey: '', model: '', temperature: 0.6, maxTokens: 4096, reasoning: 'off', retries: 2 });
@@ -111,7 +112,7 @@ export default function SettingsPage(props) {
         : String(download.githubProxiesText || '').split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
       // 镜像梯队：多行文本框 → 数组（空数组 = 用后端按基地址组合出来的默认梯队）
       const lines = (v) => (typeof v === 'string' ? v.split(/\r?\n/).map((x) => x.trim()).filter(Boolean) : (Array.isArray(v) ? v : []));
-      await put('/app/settings', {
+      const next = await put('/app/settings', {
         lang,
         comfy: { ...comfy, port: Number(comfy.port) || 8188 },
         listen: { ...listen, lan: !!listen.lan, port: Number(listen.port) || 8788 },
@@ -155,9 +156,18 @@ export default function SettingsPage(props) {
         },
       });
       toast(t('settings.saved'), 'ok');
-      await refresh();
-      const st = await api('/app/selfcheck');
-      setChecks(st);
+      // v1.1.0（修复 B7 的同源缺口）：PUT 的响应就是保存后的完整设置，开启局域网时令牌正是在
+      // 这一次请求里生成的。旧实现丢弃响应、只 refresh() 状态 —— 而 /app/state 当时不含 listen，
+      // 且开启局域网后本页尚未带令牌，refresh()/selfcheck 会被自身的令牌校验挡下（403），
+      // 于是"开启局域网后看不到令牌"永远修不好。令牌就地取用，状态刷新失败也不再算保存失败。
+      if (next && next.listen && next.listen.token) setFreshToken(next.listen.token);
+      try {
+        await refresh();
+        setChecks(await api('/app/selfcheck'));
+      } catch (e) {
+        if (next && next.listen && next.listen.token) toast(t('settings.listen.lanEnabled'), 'warn');
+        else throw e;
+      }
     } catch (e) {
       toast(t('toast.failed') + '：' + e.message, 'error');
     } finally {
@@ -196,7 +206,9 @@ export default function SettingsPage(props) {
   }
 
   const proxyText = Array.isArray(download.githubProxies) ? download.githubProxies.join('\n') : (download.githubProxiesText || '');
-  const lanToken = (state && state.listen && state.listen.token) || (s.listen && s.listen.token) || '';
+  // 令牌来源按优先级：① 本次保存的响应（唯一在"开启后当前页还没带令牌"时也拿得到的来源）；
+  // ② /app/state（v1.1.0 起下发，供重新打开页面时读取）；③ 装载时的 /app/settings 副本。
+  const lanToken = freshToken || (state && state.listen && state.listen.token) || (s.listen && s.listen.token) || '';
   const issues = (checks && checks.issues) || [];
 
   return h('div', { className: 'page' },

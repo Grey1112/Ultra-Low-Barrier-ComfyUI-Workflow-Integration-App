@@ -1,6 +1,6 @@
 {
   "name": "comfy-panel-standalone",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "description": "超低门槛的 ComfyUI 工作流集成应用：解压双击即启动，缺什么自动下载（便携 Node / 7-Zip / ComfyUI / llama.cpp，每个组件多镜像 + 10 秒换源），支持导入本机已有 ComfyUI 与模型；内置生图面板、本地 LLM 提示词生成（或外接 API）、画师库、角色词表与国内下载源。",
   "license": "MIT",

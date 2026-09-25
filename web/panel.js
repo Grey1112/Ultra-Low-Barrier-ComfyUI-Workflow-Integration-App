@@ -141,7 +141,7 @@ window.__ModuleLoader__.load({
 
 		// v1.0.0（独立版）：构建标识。面板头部据此自证"页面加载的是哪一版"。
 		// 与插件版不同：独立版静态直接托管、**没有 ?rev= 快照机制**，改代码刷新即生效。
-		const BUILD_TAG = "v1.0.0";
+		const BUILD_TAG = "v1.1.0";
 
 		// 实时通道地址：永远走面板自己的来源（同源 relay），不直连 8188。
 		// 纯函数，便于 node 侧冒烟测试直接断言。
@@ -1791,8 +1791,10 @@ window.__ModuleLoader__.load({
 			const curArtistBlocked = !!curArtist && artistBlackSet.has(curArtist);
 			// v1.0.0（独立版）：指定模式的检索范围可切为「仅收藏」（复用同一套前端过滤，只换池子）；
 			// 黑名单画师在指定模式仍可搜到，但会打上「已拉黑」标记（可手动取消）。
+			// v1.1.0：收藏范围给更大的上限 —— 用户要求"点开搜索栏就能看到全部收藏画师"，
+			// 收藏列表通常有几十上百位，50 会把后面的截掉。
 			const artistPool = artistFavOnly ? artistFavs : (artistList && !artistList.failed ? artistList.all : []);
-			const artistHits = (artistFavOnly || (artistList && !artistList.failed)) ? filterArtists(artistPool, artistQuery, 50) : [];
+			const artistHits = (artistFavOnly || (artistList && !artistList.failed)) ? filterArtists(artistPool, artistQuery, artistFavOnly ? 300 : 50) : [];
 			const artistCustomTag = normalizeCustomArtist(artistCustom);
 			const artistExact = (() => {
 				const q = artistQuery.replace(/\\/g, "").trim().toLowerCase();
@@ -2010,9 +2012,86 @@ window.__ModuleLoader__.load({
 							: artistList.failed ? "画师清单不可用：assets/artists/ 下缺少清单 txt（本次生成不注入画师）"
 								: (artistMode === "randomBig" ? "大池 59,676 位（Anima 2B 训练快照全部画师）" : "小池 前 200 位高频大画师")
 									+ " · 每张生成独立随机" + (artistBlacklist.length ? " · 已剔除 " + artistBlacklist.length + " 位拉黑画师" : "")),
-					// v1.0.1：画师收藏 / 黑名单 / 检索 / 自定义输入的完整管理界面已挪到独立「画师」页
-					//（用户要求：画师 UI 与生图分开、腾出的空间给图片）。这里只留生成时真正要用的三件事：
-					// 模式、本次指定、以及"去画师页管理"的入口 —— 数量做只读提示，不再堆列表。
+					artistMode === "randomFav" && h("div", { className: "dcp-field" },
+						h("span", null, "收藏画师（点 ✕ 移除；拉黑的画师不参与随机）"),
+						artistFavs.length
+							? h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
+								artistFavs.map((tag) => h("span", { key: tag, className: "dcp-artist-chip" + (artistBlackSet.has(tag) ? " blocked" : "") },
+									h("span", null, tag),
+									artistBlackSet.has(tag) ? h("span", { title: "已拉黑：不参与随机档" }, "🚫") : null,
+									h("button", { disabled: running, title: "从收藏移除 " + tag, onClick: () => { const next = toggleFavExclusive(tag); setArtistFavs(next.favs); setArtistBlacklist(next.blacklist); } }, "✕"),
+								)))
+							: h("div", { className: "dcp-muted" }, "收藏为空：在指定模式搜索列表点 ★ 收藏，或生成后点图上的「⭐ 收藏」"),
+					),
+					artistMode === "fixed" && h("div", { className: "dcp-field" },
+						// v1.0.0：指定模式有两种来源 —— 清单/收藏里点选，或**自定义画师**自由输入；
+						// 检索范围可在「全部清单」与「仅收藏」之间切换（同一套前端过滤，只换池子）。
+						h("span", null, "搜索画师（点选列表；也可以用下面的自定义输入直接使用一个画师名）"),
+						h("div", { className: "dcp-seg", style: { maxWidth: 260 } },
+							h("button", { className: artistFavOnly ? "" : "on", disabled: running, onClick: () => setArtistFavOnly(false) }, "全部清单（59,676）"),
+							h("button", { className: artistFavOnly ? "on" : "", disabled: running, onClick: () => setArtistFavOnly(true) }, "仅收藏（" + artistFavs.length + "）"),
+						),
+						h("input", {
+							value: artistQuery,
+							placeholder: artistFavOnly ? "在收藏里搜索画师名，如 wlop / ham…" : "输入画师名前几个字母或完整名字，如 wlop / ham…",
+							onChange: (e) => { setArtistQuery(e.target.value); setArtistDropOpen(true); },
+							onFocus: () => setArtistDropOpen(true),
+							onBlur: () => setTimeout(() => setArtistDropOpen(false), 150),
+						}),
+						// 自定义画师：格式规范为 @名字（下划线转空格、只留 Danbooru tag 字符），输入即可用。
+						h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
+							h("input", {
+								value: artistCustom,
+								disabled: running,
+								placeholder: "自定义画师：直接写名字（自动转 @名字，下划线转空格，不校验清单）",
+								onChange: (e) => setArtistCustom(e.target.value),
+								onKeyDown: (e) => { if (e.key === "Enter") { e.preventDefault(); useCustomArtist(); } },
+							}),
+							h("button", {
+								className: "dcp-btn", disabled: running || !artistCustomTag,
+								title: artistCustomTag ? "使用自定义画师 " + artistCustomTag : "请输入画师名（允许字符：字母/数字/圆括号/连字符/撇号/句点）",
+								onClick: () => useCustomArtist(),
+							}, artistCustomTag ? "使用 " + artistCustomTag : "使用自定义画师"),
+						),
+						// 查询词精确命中池内 tag 时的快捷收藏行
+						artistExact && artistExact !== artistFixed && h("button", {
+							className: "dcp-btn ghost", style: { alignSelf: "flex-start", fontSize: 11, padding: "2px 8px" }, disabled: running,
+							onMouseDown: () => { const next = toggleFavExclusive(artistExact); setArtistFavs(next.favs); setArtistBlacklist(next.blacklist); flashNote("已收藏画师 " + artistExact); },
+						}, "★ 收藏该画师：" + artistExact),
+						artistDropOpen && (artistFavOnly || (artistList && !artistList.failed)) && h("div", { className: "dcp-artist-drop" },
+							artistHits.length
+								? artistHits.map((tag) => h("div", { key: tag, className: "dcp-artist-drop-row" },
+									h("span", { className: "dcp-artist-drop-name", title: "点击选为生成画师：" + tag, onMouseDown: () => { setArtistFixed(tag); setArtistQuery(""); setArtistDropOpen(false); } },
+										tag + (artistBlackSet.has(tag) ? "（已拉黑）" : "")),
+									h("button", { className: "dcp-artist-drop-star", title: artistFavs.includes(tag) ? "从收藏移除 " + tag : "收藏 " + tag, onMouseDown: (e) => { e.stopPropagation(); const next = toggleFavExclusive(tag); setArtistFavs(next.favs); setArtistBlacklist(next.blacklist); } }, artistFavs.includes(tag) ? "★" : "☆"),
+									h("button", { className: "dcp-artist-drop-star", style: { color: artistBlackSet.has(tag) ? "#fda4af" : undefined }, title: artistBlackSet.has(tag) ? "取消拉黑 " + tag : "拉黑 " + tag + "（三档随机均不再出现）", onMouseDown: (e) => { e.stopPropagation(); const next = toggleBlacklistExclusive(tag); setArtistFavs(next.favs); setArtistBlacklist(next.blacklist); } }, "🚫"),
+								))
+								: h("div", { className: "dcp-artist-drop-row" },
+									h("span", { className: "dcp-artist-drop-name" }, artistFavOnly ? "收藏里没有匹配的画师（可在「全部清单」里搜索并点 ★ 收藏）" : "无匹配画师（池内共 59,676 位，输入前几个字母搜索）")),
+						),
+						artistFixed && h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
+							h("span", { className: "dcp-artist-chip" + (artistBlackSet.has(artistFixed) ? " blocked" : "") },
+								h("span", null, "已选画师：" + artistFixed + (artistBlackSet.has(artistFixed) ? "（已拉黑）" : "")),
+								h("button", { disabled: running, title: "清除已选画师，回到不注入", onClick: () => setArtistFixed(null) }, "✕"),
+							),
+							h("button", {
+								className: "dcp-btn ghost", style: { padding: "2px 8px", fontSize: 11 }, disabled: running,
+								title: artistBlackSet.has(artistFixed) ? "取消拉黑该画师" : "拉黑该画师（仅影响随机档）",
+								onClick: () => { const next = toggleBlacklistExclusive(artistFixed); setArtistFavs(next.favs); setArtistBlacklist(next.blacklist); },
+							}, artistBlackSet.has(artistFixed) ? "🚫 取消拉黑" : "🚫 拉黑"),
+							h("button", {
+								className: "dcp-btn ghost", style: { padding: "2px 8px", fontSize: 11 }, disabled: running,
+								title: artistFavs.includes(artistFixed) ? "从收藏移除" : "收藏该画师",
+								onClick: () => { const next = toggleFavExclusive(artistFixed); setArtistFavs(next.favs); setArtistBlacklist(next.blacklist); },
+							}, artistFavs.includes(artistFixed) ? "⭐ 取消收藏" : "⭐ 收藏"),
+						),
+						!artistFavOnly && !artistList && h("div", { className: "dcp-muted" }, "画师清单加载中…"),
+						!artistFavOnly && artistList && artistList.failed && h("div", { className: "dcp-muted" }, "画师清单不可用：assets/artists/ 下缺少清单 txt（自定义画师仍可直接输入使用）"),
+					),
+					// v1.1.0：画师收藏 / 黑名单 / 检索的完整管理界面仍在独立「画师」页（用户要求：管理 UI 与生图分开）。
+					// 但「生成时到底用哪位画师」必须在这里能选：上一轮把画师管理挪到画师页时，把搜索框一起删掉了，
+					// 只留模式选项与一堆无人调用的 state（artistQuery / artistDropOpen / artistFavOnly / artistCustom）。
+					// v1.1.0 把搜索块恢复（见上方 fixed 分支）；这里保留数量只读提示 + 去画师页的入口。
 					h("div", { className: "dcp-field" },
 						h("span", null, "画师管理（收藏 / 黑名单 / 自定义画师）"),
 						h("div", { className: "dcp-muted" },

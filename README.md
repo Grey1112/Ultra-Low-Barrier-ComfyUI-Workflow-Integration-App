@@ -26,12 +26,13 @@
 
 | 项目 | 值 |
 |---|---|
-| 版本 | `v1.0.0` |
-| 面板头部徽标 | `🎨 超低门槛 ComfyUI 工作流集成应用 v1.0.0`（副标题同时显示 `内嵌模式` / `外接模式`） |
+| 版本 | `v1.1.0` |
+| 面板头部徽标 | `🎨 超低门槛 ComfyUI 工作流集成应用 v1.1.0`（副标题同时显示 `内嵌模式` / `外接模式`） |
 | 后端默认地址 | `http://127.0.0.1:8788/` |
 | Node 运行时 | 随项目携带便携版（`runtime\node`），**不需要预装** |
 | npm 依赖 | **零**（`package.json` 的 `dependencies` / `devDependencies` 均为空） |
 | 本项目代码 | **MIT**（见 `LICENSE`） |
+| **代码来源** | **全部由 AI 生成**（人类一方负责提出需求、验收行为、决定发布）—— 声明与第三方边界见 [`AI-DECLARATION.md`](AI-DECLARATION.md) |
 | 目标平台 | Windows（后端为跨平台 Node 代码，但启动脚本与便携包面向 Windows） |
 
 ### 1.1 许可证速查表
@@ -549,6 +550,12 @@ http://<本机IP>:8788/?token=<令牌>
 
 或带 `X-DCP-Token` 请求头。启动日志里的"局域网地址"行已经带好令牌，直接用即可。**关闭令牌 / 未开启局域网时不做校验。**
 
+> **本机不受令牌影响（v1.1.0 修复）**：令牌是给**局域网内其它设备**的，来自回环地址（本机浏览器 / 启动器探活）的请求一律放行。
+> 这一点很关键：旧实现对所有来源都要令牌，于是开启局域网后**本机页面自己的接口也全部 401** ——
+> 设置页会被外壳换成"后端 API 不可用"，令牌反而永远看不到；而且启动器 `scripts\start.ps1` 用
+> `http://127.0.0.1:<端口>/app/state` 探活、不带令牌，一旦局域网开关被保存过，**下次双击 `start.cmd` 会等满 60 秒后报"后端在 60 秒内没有就绪"并杀掉后端**。
+> 现在：保存后令牌会立刻显示在设置页（无需刷新页面），本机照常使用；其它设备仍然必须带 `?token=`（或 `X-DCP-Token`）。
+
 ---
 
 ## 10. 数据与目录结构
@@ -836,6 +843,7 @@ http://<本机IP>:8788/?token=<令牌>
 | [docs/INTERNAL-CONTRACT.md](docs/INTERNAL-CONTRACT.md) | 前后端冻结契约（设置模型、Job+SSE、HTTP 接口、数据落盘、i18n） | ✅ 是 |
 | [THIRD_PARTY.md](THIRD_PARTY.md) | 第三方组件清单、各自许可、分发义务与不确定点 | ✅ 是 |
 | [LICENSES/](LICENSES/) | 各上游许可全文与 `LICENSES/README.md` 索引 | ✅ 是 |
+| [AI-DECLARATION.md](AI-DECLARATION.md) | **AI 生成声明**：本项目自身全部代码与文档由 AI 生成；第三方边界、免责与"以实测记录为准"的指引 | ✅ 是 |
 
 > 四份交付文档（本文、`FEATURES.md`、`docs/FULL-REFERENCE.md`、`MIGRATION.md`）都在 `scripts/build-core.ps1` 的核心版打包白名单里，随核心版一起交付；
 > `docs/HANDOVER.md` 与 `docs/INTERNAL-CONTRACT.md` 在 `docs/` 目录内，同样随核心版交付（交接文档已做去标识化，不含任何真实机器路径/用户名）。
@@ -854,4 +862,5 @@ http://<本机IP>:8788/?token=<令牌>
 | v1.0.0（第四轮） | 本轮追加 | 回车即发送；外接 API **四挡推理**（off/low/high/max，实测数据见附录 L）；**上下文只留本地、默认不外发**（历史可整段复制）；工作台重排（LLM 在最上、提示词工具第二、提示词/参考图进左栏、主图变小历史变大、跳转图片文件夹）；默认画师 **大随机**；**切模型不再清空提示词与画师设置**；画师页新增**本机作品**（缩略图 + 一键收藏 + 搜索 + 「本地没有产品」空态）。 |
 | v1.0.0（第五轮） | 本轮修复 | 修复**双击 `start.cmd` 启动失败**的真实缺陷：`start.cmd` 由「LF + UTF-8 中文注释」改为**纯 ASCII + CRLF**（cmd.exe 按 OEM 代码页读批处理文件，中文注释会吃掉行尾 → exit 9009）；`scripts/check.js` 新增 **[4b] 批处理编码红线**（自检 16 → **17 项**）；验收补上「双击等价启动」（`Start-Process <包>\start.cmd`）；MIGRATION 新增 §13 给其他设备的两条硬约束。 |
 | v1.0.0（第六轮） | 本轮调整 | 最小下载挡位的生图模型改为 **`anima-turbo-v1.1.safetensors`**：`installer/models.json` 里 turbo 由 standard 提到 **minimal**、`Anima-3.8B-v1.1` 与 `qwen35_4b` 降到 standard，最小挡位 **14.00 → 5.24 GB**（正好等于"面板默认配置开箱能出图"的最小集），standard / full 不变。 |
+| **v1.1.0**（第八轮） | 本轮修复+新增 | ①**逐条核对用户提交的 `BUGS-AND-FIXES.md` 并修复**（对照结论：B6/B7/B8/B9 在本仓库**确实存在**，B5 也确是缺陷）：**B6** `/app/state` 补 `llm.provider`/`llm.api`，对话就绪度与顶栏 LLM 徽标改按**推理来源**判定 —— 外接 API 模式（产品默认）不再被误判"本地 LLM 未就绪"而发不出消息、徽标也显示实际来源（如 `deepseek-flash`）；**B7** `/app/state` 补 `listen` + 设置页就地取 PUT 响应里的令牌 + **`lanGuard` 放行回环来源**，顺带修掉两个连带故障（开启局域网后本机页面所有 `/app/*` 立刻 401、外壳整页变成"后端 API 不可用"；以及 `scripts\start.ps1` 的 127.0.0.1 探活被 401 挡下 → 下次双击 `start.cmd` 等满 60 秒报"后端没有就绪"并杀掉后端）；**B8** `api()` 对纯对象 body 自动 `JSON.stringify`（「新建会话」「设为默认」「移除模型」「添加本地路径」「从浏览器旧数据导入」等 10 处按钮不再 400 `[object Object]`）；**B9** 自检按 `llm.provider` 条件化（外接 API 下不再常驻"本地 LLM 运行时缺失"假告警）；**B5** `setup.json` 补回被 `skipped` 的权重（用硬链接导入本机已有 ComfyUI 时不再记成空 `models: []`）。②**恢复面板「🔍 指定画师」的搜索框与下拉**：v1.0.1 把画师管理挪到独立「画师」页时连搜索一起删了，只剩模式选项与一批无人调用的 state（`artistQuery` / `artistDropOpen` / `artistFavOnly` / `artistCustom` / `useCustomArtist`），选中「指定画师」后无处可搜 —— 这正是用户报的"选择画师搜索后无法进行搜索"；③按需求提供**收藏画师搜索**：切到「仅收藏（N）」范围后点开搜索栏即列出**全部收藏画师**，输入按名字子串过滤，点一行即选中（黑名单画师仍可搜到并标注「已拉黑」；收藏范围上限放宽到 300）；④新增 i18n 键 `settings.listen.lanEnabled`（开启局域网后的提示）；⑤新增验收脚本 `round8-ui.cjs`（无头 Edge 真实点击 **23/23**）与 `b5-setup-models.cjs`（**4/4**）；⑥新增 **[`AI-DECLARATION.md`](AI-DECLARATION.md)** —— 声明本项目自身的全部代码与文档由 AI 生成（附第三方边界、免责声明与"以实测记录为准"的指引），并把它加进 `scripts\build-core.ps1` 的交付白名单与"文档齐全"检查。 |
 | v1.0.0（第七轮） | 本轮修复+新增 | ①**向导进度不再丢**：新增 `GET /app/jobs`（任务列表 + running），向导页回到页面会自动重挂正在跑的安装任务，顶栏还有全局任务条（切到任何页面都能看到进度）；②**修掉"无论真实速度多少，面板都显示 0"的根因**——下载引擎的字节计数从未真正生效（`got` 一直是初值），于是进度恒 0%、速度恒 0、连"没数据就判死"的看门狗也在误杀正常下载；计数器改为挂在 `pipeline` 的 `Transform` 上；③**镜像体系重做为数据驱动**：`download.hfMirrors / nodeMirrors / jsdelivrMirrors / githubProxies / extraMirrors` 全部是设置项，支持 `{repo} {path} {file} {rev} {ver} {url}` 占位符；权重梯队 = ModelScope(`master`) → aifasthub → **hf-api.gitee.com** → **ai.gitcode.com** → hf-mirror，Node 梯队 = 清华 → 官方 → 华为云 → npmmirror（实测 5 源全部可用），角色词表 = jsDelivr(fastly/gcore) → raw + GitHub 代理；并落地**「10 秒内没有进展就换源」+「连续 15 秒没有新字节判停滞」+「远慢于已见最佳源即换源」**三条规则（阈值可在设置页调）；④新增**镜像测速**：设置页一键对任意直链的每个来源真下 100 MiB 报首字节与速度（`GET /app/download/speedtest`）；⑤**截断下载防线**：改名之前校验字节数完整性（实测 ModelScope 会把 242 MB 的文件下成 126/121/112/3 MB 而流"正常结束"，旧代码会静默接受损坏文件）；⑥**角色 tag 规范化**（`rem (re:zero)`、Markdown 转义的 `rem \(re:zero\)` → `rem_(re:zero)`，并如实报告改了什么）；⑦**派生值不再落盘**（升级默认镜像对老用户生效）；⑧项目名改为**「超低门槛 ComfyUI 工作流集成应用」**，README 开头新增"为什么说超低门槛"对照表；⑨新增 **`docs/HANDOVER.md` 项目交接文档**。**如实标注**：本环境里 GitHub 系资源（ComfyUI 便携包、llama.cpp）实测只有 `gh-proxy.com` 与 `down.npee.cn` 两个快源；4.2 GB 的 `anima-turbo-v1.1` 只有 ModelScope 是快源（gitcode / gitee / aihub 的镜像快照里还没有这个文件）。 |

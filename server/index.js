@@ -74,9 +74,24 @@ async function readJsonBody(req) {
   }
 }
 
+/** 回环来源判断（本机自己的浏览器 / 启动器探活）。 */
+function isLoopback(req) {
+  const a = (req.socket && (req.socket.remoteAddress || '')) || '';
+  return a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1';
+}
+
 function lanGuard(req, url) {
   const s = load();
   if (!s.listen.lan) return true;
+  // v1.1.0（修复 B7 的第三层缺口）：回环来源放行。
+  // README §9.2 的口径是「局域网内**其它设备**必须带上令牌」，而旧实现对所有来源一律要求令牌，
+  // 由此产生两个真实故障：
+  //   ① 设置页勾选并保存后，**本页**后续 /app/* 全部 401 → 外壳把整页换成「后端 API 不可用」，
+  //      令牌行反而永远看不到（用户报的"开启局域网后看不到令牌"，根因就在这里）；
+  //   ② 启动器 scripts/start.ps1 用 http://127.0.0.1:<port>/app/state 探活且不带令牌，
+  //      一旦 lan=true 被持久化，下次双击 start.cmd 会等满 60 秒、报"后端没有就绪"并杀掉后端。
+  // 只放行本机并不削弱安全姿态：未开启局域网时本来就不校验；局域网内其它设备仍然必须带令牌。
+  if (isLoopback(req)) return true;
   const token = s.listen.token;
   if (!token) return true;
   const given = req.headers['x-dcp-token'] || url.searchParams.get('token');
@@ -116,7 +131,12 @@ async function handleApp(req, res, url, body) {
         output: works.outputDir(),
       },
       comfy: { mode: s.comfy.mode, dir: status.dir, port: status.port, online: status.online, running: status.running, pid: status.pid, layout: status.layout, modelsDir: status.modelsDir },
-      llm: { runtime: lstatus.runtime, model: lstatus.model, modelCount: lstatus.models.length, server: lstatus.server, contextMessages: s.llm.contextMessages, sendContext: s.llm.sendContext === true, keepMessages: s.llm.keepMessages, reasoning: s.llm.api.reasoning },
+      // v1.1.0（修复 B6）：必须下发 provider 与 api —— 前端要按推理来源判定"能不能发消息"，
+      // 只给 runtime 的话外接 API 模式（默认来源）永远被判成"本地 LLM 未就绪"。
+      llm: { runtime: lstatus.runtime, model: lstatus.model, modelCount: lstatus.models.length, server: lstatus.server, contextMessages: s.llm.contextMessages, sendContext: s.llm.sendContext === true, keepMessages: s.llm.keepMessages, reasoning: s.llm.api.reasoning, provider: lstatus.provider, api: lstatus.api },
+      // v1.1.0（修复 B7）：局域网令牌只在 PUT /app/settings 时生成，而设置页保存后只刷新本接口，
+      // 页面里的 settings 副本不重拉 —— 不下发 listen 的话令牌行永远读不到值。
+      listen: { lan: s.listen.lan === true, port: s.listen.port, token: s.listen.lan ? (ensureLanToken() || '') : '' },
       setup,
       selfcheck: selfcheck(),
       platform: process.platform,

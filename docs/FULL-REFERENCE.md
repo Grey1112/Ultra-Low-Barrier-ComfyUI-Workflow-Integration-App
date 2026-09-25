@@ -1,4 +1,4 @@
-# comfy-panel-standalone 完整技术参考（v1.0.0）
+# comfy-panel-standalone 完整技术参考（v1.1.0）
 
 > **本文档面向谁**：接手本项目的维护者（可能在没有任何上下文的情况下冷启动）。
 > **一句话作用**：把「这个项目由哪些文件组成、每个文件负责什么、数据落在哪、为什么这么设计」讲清楚，
@@ -186,7 +186,7 @@
 **职责**：唯一的路径来源（`paths`）、默认设置（`DEFAULTS`）、归一化与夹紧（`normalize`）、加减（`load`/`save`）、生效 ComfyUI 目录（`comfyDir`）、启动自检（`selfcheck`）。
 
 - `ROOT = path.resolve(__dirname, '..')`，其余 28 个路径全部基于 `ROOT`：`web`、`assets`、`data`、`models`、`llmModels=models/llm`、`runtime`、`runtimeBin=runtime/bin`、`runtimeDl=runtime/_dl`、`comfyEmbedded=runtime/comfyui`、`logs`、`jobs=logs/jobs`、`installer`、`licenses`、`artists=assets/artists`、`templates`、`systemPrompt`、`modelsJson`、`settingsFile`、`artistsFile`、`llmModelsFile`、`llmSessionsFile`、`setupFile`、`serverLog`、`comfyLog`、`llmLog`。
-- `VERSION = '1.0.0'`，`BUILD_TAG = 'v' + VERSION`。
+- `VERSION = '1.1.0'`，`BUILD_TAG = 'v' + VERSION`。
 - `load()` 带内存缓存（首次读 `data/settings.json` 后常驻）；`save(patch)` = `normalize(deepMerge(load(), patch))` → 更新缓存 → `fsx.writeJsonAtomic`。
 - `deepMerge`：对象递归合并；数组与标量整体替换；`undefined` 不覆盖。
 - `normalize()` 的夹紧规则（越界/非法一律回落默认值）：
@@ -585,8 +585,8 @@ window.__ModuleLoader__.load({ id: "dsh-comfy-panel", factory: (require) => { ..
 
 | # | 锚点（搜索用） | 插件版 | 独立版改法 |
 |---|---|---|---|
-| 1 | `const BUILD_TAG` | 随插件版本号走 | 固定 `"v1.0.0"`，注释说明「独立版静态托管、无 `?rev=` 快照机制，改代码刷新即生效」 |
-| 2 | 头部标题（`dcp-head` 内 `h("span", { title: "面板构建 " + BUILD_TAG ... })`） | `🎨 ComfyUI 生图 <版本>` | `🎨 超低门槛 ComfyUI 工作流集成应用 v1.0.0`，`title` 说明静态托管与刷新即生效 |
+| 1 | `const BUILD_TAG` | 随插件版本号走 | 固定 `"v1.1.0"`，注释说明「独立版静态托管、无 `?rev=` 快照机制，改代码刷新即生效」 |
+| 2 | 头部标题（`dcp-head` 内 `h("span", { title: "面板构建 " + BUILD_TAG ... })`） | `🎨 ComfyUI 生图 <版本>` | `🎨 超低门槛 ComfyUI 工作流集成应用 v1.1.0`，`title` 说明静态托管与刷新即生效 |
 | 3 | `artistStore()/loadFavorites()/loadBlacklist()/persistArtists()/saveFavorites()/saveBlacklist()` | 收藏读写 `localStorage['dcp-artist-favs']` | 改为读写 `window.__DCP_ARTISTS__`，持久化交给外壳的 `window.__DCP_SAVE_ARTISTS__`（服务端 `data/artists.json`）；`FAV_STORAGE_KEY` 常量保留但只作历史兼容说明 |
 | 4 | 新增互斥工具 `toggleFavExclusive/toggleBlacklistExclusive/withoutBlacklisted/normalizeCustomArtist` | 无 | 收藏与黑名单互斥（后执行覆盖）；三档随机剔除黑名单；自定义画师名字规范化（去 `@`/下划线转空格/只留 Danbooru tag 字符） |
 | 5 | 图上三按钮（`curArtist` 段：`dcp-secrow`） | 无 | `⭐ 收藏/取消收藏`、`🎯 选为画师`（切到 `fixed` 并固定）、`🚫 拉黑/取消拉黑`；画师 tag 来自生成元数据或**落盘文件名**（`/<画师>_<序号>_00001_.png`） |
@@ -854,6 +854,11 @@ window.__ModuleLoader__.load({ id: "dsh-comfy-panel", factory: (require) => { ..
 | GET | `/app/download/probe?url=` | 设置页「测试镜像」 |
 | GET | `/app/download/speedtest?url=&mib=&capMs=` | **新增（第七轮）**：镜像测速 —— 对该直链的**每个候选来源各真下 N MiB**（默认 100，读满即停、不落盘），返回 `{url,bytes,items:[{url,source,via,status,firstByteMs,gotBytes,sec,mbps,ok,note,error}],ok,usable,total}`；同一时刻只允许一个（并发时 409）。设置页「下载源 → 镜像测速」 |
 
+> **`/app/state` 的字段（v1.1.0 补齐三处）**：`llm.provider`（`local`/`api`）与 `llm.api`（`{ok,baseUrl,model,hasKey,missing}`）—— 前端必须按**推理来源**判定"能不能发消息"与顶栏徽标，
+> 只给 `llm.runtime` 时外接 API 模式（产品默认来源）会被恒判"本地 LLM 未就绪"；以及 `listen:{lan,port,token}` ——
+> 设置页的令牌行读的就是它（见 §9 的局域网边界）。三处都在 `server/index.js` 的 `/app/state` 分支里一次性给出，
+> 数据源是 `llm.serverStatus()`（本来就返回 `provider`/`api`）与 `load()`。
+
 ### 8.2 ComfyUI 进程与兼容面
 
 | 方法 | 路径 | 典型调用方 |
@@ -935,7 +940,7 @@ window.__ModuleLoader__.load({ id: "dsh-comfy-panel", factory: (require) => { ..
 | 边界 | 实现 | 为什么 |
 |---|---|---|
 | 默认只监听回环 | `listen.lan=false` → `host=127.0.0.1` | 本地工具默认不该暴露到局域网；要给别人用得显式开启 |
-| LAN 必须带令牌 | `lanGuard()` 校验 `X-DCP-Token` 或 `?token=`；开启 LAN 时自动生成 24 位十六进制令牌并落盘 | 同网段任何人扫到端口即可操作你的 ComfyUI/LLM；令牌是最小可用门槛 |
+| LAN 必须带令牌 | `lanGuard()` 校验 `X-DCP-Token` 或 `?token=`；开启 LAN 时自动生成 24 位十六进制令牌并落盘。**回环来源放行（v1.1.0）**：`remoteAddress` ∈ `127.0.0.1` / `::1` / `::ffff:127.0.0.1` 时不校验 —— 令牌是给局域网内**其它设备**的；旧实现把本机也挡在门外，后果是"设置页保存后本页全部 401、令牌行永远看不到"以及"`start.ps1` 的 127.0.0.1 探活 401 → 下次双击 `start.cmd` 报后端没就绪并杀掉后端" | 同网段任何人扫到端口即可操作你的 ComfyUI/LLM；令牌是最小可用门槛。回环放行不削弱默认姿态：`lan=false` 时本来就不校验 |
 | WS 也受令牌保护 | `server.on('upgrade')` 里先 `lanGuard`，不通过直接回 401 并断开 | 否则进度/预览通道会成为后门 |
 | 反代只转发 `content-type` | `comfy.proxy()` 构造上游请求时**只带** `content-type`；响应只回 `content-type`/`content-length` | 浏览器的 Cookie、Referer、Authorization 等一律不带给 ComfyUI（继承插件版的隐私边界） |
 | WS 握手只保留 6 个头 | 白名单 `upgrade/connection/sec-websocket-key/sec-websocket-version/sec-websocket-extensions/sec-websocket-protocol` | 同上：Cookie 不透传 |
@@ -1444,6 +1449,7 @@ window.__ModuleLoader__.load({ id: "dsh-comfy-panel", factory: (require) => { ..
 | v1.0.0（第四轮） | 本轮追加 | 回车发送；外接 API **推理四挡**（`reasoning_effort`，实测 off/low/high/max；旧 `thinking` 自动迁移）；`sendContext`/`keepMessages` 上下文策略（界面留历史、默认不外发）；工作台重排（LLM 栏首、提示词工具第二、提示词与参考图进左栏、主图变小/历史变大、跳转图片文件夹）；默认画师 **大随机**；切模型不再清空提示词；新增 **`server/works.js`** 与本机作品接口（`/app/artists/works`、`/app/output/file`、`/app/open-folder`）；决策追加 **㉔㉕**；验证补 round4 30/30、round2-ui 23/23、round3-api 13/13、llm-test LLM_OK；新增 **附录 L** |
 | v1.0.0（第五轮） | 本轮修复 | **修复"双击 start.cmd 启动失败"的真实缺陷**：`.cmd` 由 LF+UTF-8 中文改为 **纯 ASCII + CRLF**（cmd.exe 按 OEM 代码页读批处理，中文注释会把行尾吃掉 → exit 9009）；`check.js` 新增 **[4b] 批处理编码红线**（自检 16 → **17 项**）；用 `Start-Process <包>\start.cmd`（等价双击）补上验收缺口；决策追加 **㉖**、新增 **附录 M**。 |
 | v1.0.0（第六轮） | 本轮调整 | **最小下载挡位改为 `anima-turbo-v1.1.safetensors`**：`installer/models.json` 里 turbo 由 standard 提到 minimal，Anima-3.8B-v1.1 与 qwen35_4b 降到 standard → minimal **14.00 GiB → 5.24 GiB**（standard 25.69 / full 47.27 不变）；决策追加 **㉗**；向导/计划接口实测 `tiers={5.24, 25.69, 47.27}`。 |
+| **v1.1.0**（第八轮） | 本轮修复+新增 | ①**逐条核对 `BUGS-AND-FIXES.md` 并修复**（B6/B7/B8/B9 在本仓库确实存在，B5 也确是缺陷）：§3.1 的 `/app/state` 补 `llm.provider`/`llm.api`/`listen`（B6/B7），§4.4/§4.3 的前端就绪度与顶栏徽标改按来源判定（B6）；`web/app-shell.js` 的 `api()` 对纯对象 body 自动 `JSON.stringify`（B8）；§3.2 自检按 `llm.provider` 条件化（B9）；§3.6 向导 `setup.json` 的 `models` 合并 `installed + skipped`（B5）；§9 新增**回环来源豁免**的边界说明（B7 的第三层缺口：本机页面与 `start.ps1` 探活都不该被令牌挡下）。②**恢复面板「🔍 指定画师」的搜索框与下拉**（§4.6 锚点：v1.0.1 迁移画师管理到独立页时误删了渲染块，`artistQuery`/`artistDropOpen`/`artistFavOnly`/`artistCustom`/`useCustomArtist` 全部成为死代码），并按需求提供**收藏画师搜索**（仅收藏范围点开即列全部收藏、子串过滤、点选即用）。③新增 i18n 键 `settings.listen.lanEnabled`。④验证记录见 §13.1 与附录 O（本轮 UI 验收 23/23、B5 4/4）；⑤新增 **`AI-DECLARATION.md`**（AI 生成声明：本项目自身全部代码与文档由 AI 生成 + 第三方边界 + 免责 + "以实测记录为准"的指引），并加入 `scripts/build-core.ps1` 的 `$IncludeFiles` 白名单与"交付文档齐全"检查（附录 O.5）。 |
 | v1.0.0（第七轮） | 本轮修复+新增 | ①新增 `GET /app/jobs`（列表 + running），向导按 `kind=setup` 重挂运行中任务，顶栏加全局任务条；②**下载引擎字节计数从未生效**（`got` 恒为初值）—— 进度/速度恒 0、停滞看门狗误杀正常下载，计数器改挂 `pipeline` 的 `Transform`；③**改名之前校验完整性**（实测 ModelScope 会把 242 MB 下成 126/121/112/3 MB 而流"正常结束"，旧代码会静默接受损坏文件）；④**`force` 一路传到下载引擎**（否则"重新下载"2.5 秒就"完成"）；⑤镜像梯队全面数据化（`hfMirrors`/`nodeMirrors`/`jsdelivrMirrors`/`githubProxies`/`extraMirrors` + 9 个占位符），并落地「10 s 无进展换源」+「15 s 无新字节判停滞」+「远慢于已见最佳源即换源」；⑥新增 `GET /app/download/speedtest`（每源真下 100 MiB）与设置页测速表；⑦角色 tag 规范化（含 Markdown 转义 `rem \(re:zero\)`），新增 `charactersFixed` 帧与 i18n 键；⑧`save()` 不再把派生梯队/等于默认值的 `githubProxies` 写进 `settings.json`；⑨项目改名「超低门槛 ComfyUI 工作流集成应用」；⑩新增 **`docs/HANDOVER.md` 项目交接文档**。决策追加 **㉘–㉝**，新增 **附录 N（镜像实测全表）**。**如实标注**：GitHub 系资源只有 gh-proxy.com 与 down.npee.cn 两个快源；`anima-turbo-v1.1`（4.2 GB）只有 ModelScope 是快源。 |
 
 ---
@@ -1907,4 +1913,79 @@ body: {"operation":"download","transfers":["basic"],"objects":[{"oid":"<sha256>"
 用**真实下载路径**把每个候选来源各下一段，列出首字节耗时、实际速度与判定；不落盘、同一时刻只跑一个任务。
 `GET /app/download/speedtest?url=<直链>&mib=100` 是它的接口。
 命令行侧的等价物是 `.scratch/round5-mirrors.cjs`（结构自检 + 每组件逐源实测，直到凑够 3 个可用源）。
+
+---
+
+## 附：第八轮实测补充（对照 `BUGS-AND-FIXES.md` 核修 + 画师搜索恢复）
+
+### O.1 对照结论（逐条核对，不照抄对方结论）
+
+用户提交的 `BUGS-AND-FIXES.md` 里 4 条"已修"与 1 条"观察项"，**在本仓库中全部复现**（说明那份修复只落在别人机器上，没有回流到本仓库）：
+
+| 条目 | 本仓库是否存在 | 复现方式（修复前） |
+|---|---|---|
+| B6 就绪度写死本地来源 / `/app/state` 不下发 `provider`/`api` | **存在** | 真实 `/app/state` 的 `llm` 只有 `runtime/model/modelCount/server/...`；`web/pages/llm.js` 的 `notReady` 只看 `runtime.runtime.ok` |
+| B7 `/app/state` 不下发 `listen` | **存在** | 真实 `/app/state` 无 `listen` 字段；`web/pages/settings.js` 的令牌行回退读 `state.listen.token` 恒为 `''` |
+| B8 `api()` 不序列化对象 body | **存在** | `fetch(url,{body:{...}})` → 后端 400 `请求体不是合法 JSON："[object Object]" is not valid JSON`（实测复现） |
+| B9 自检无条件报 `llm-runtime-missing` | **存在** | `provider=api`（默认）时 `/app/state` 与 `/app/selfcheck` 仍常驻该告警 |
+| B5 `setup.json` 的 `models` 只记 `installed`、丢 `skipped` | **存在** | 用外接目录 + 字节数吻合的假权重跑 `runSetup`：`installModels` 返回 `{installed:[],skipped:[id]}`，落库得到 `models: []` |
+
+### O.2 本轮修复与验证（都是实跑，不是读代码）
+
+| 验证 | 方式 | 结果 |
+|---|---|---|
+| B6① `/app/state` 字段 | 真实 HTTP | `llm.provider="api"`、`llm.api={ok:true,baseUrl,model,hasKey,missing}` |
+| B6② 对话就绪度 | 无头 Edge 点「发送」 | 出现「…还缺 API Key…」的可操作提示；**不再**出现「本地 LLM 未就绪」 |
+| B6③ 顶栏徽标 | 无头 Edge 读 `.topbar .badge` | 显示实际来源 `deepseek-flash`（旧实现恒读本地运行时） |
+| B7① `/app/state` 补 `listen` | 真实 HTTP | `{lan:false,port,token:""}` / 开启后为 24 位 hex |
+| B7② 保存后令牌可见 | 无头 Edge：勾选→保存→读页面 | 令牌行立即出现（取自 PUT 响应），无需刷新 |
+| B7③ 回环豁免 | Node 分别打回环与非回环 | 回环 `/app/state` **200**；非回环无令牌 **401**、带正确令牌 **200**、带错令牌 **401** |
+| B8 | 无头 Edge 点「从浏览器旧数据导入」 | `POST /app/artists/import` **200**（修复前 400），页面无「不是合法 JSON」 |
+| B9 | 真实 HTTP | 自检只剩 `comfy-embedded-missing`（本机未装 ComfyUI），`llm-runtime-missing` 消失 |
+| B5 | `.scratch/b5-setup-models.cjs`（造一个字节数吻合的假权重 + 全 skip 跑 `runSetup`） | **4/4**；`setup.json.models` 含该 id，测试后自动还原 `setup.json` |
+| 画师搜索（用户报障） | `.scratch/round8-ui.cjs`（无头 Edge 真实点击，**23/23**） | 指定模式下搜索框/范围切换存在；「仅收藏」点开列出全部 3 位收藏 → 输入 `w` 只剩 `@wlop` → 点选后固定为 `@wlop` 且搜索框清空、下拉收起；「全部清单」范围可搜到 `@dairi` 并点选成功 |
+| 回归基线 | `scripts/check.js` + 3 个纯函数脚本 | `check` **17/17**；`panel-test` **32/32**；`round2b-alias` **9/9**；`round5-chars` **10/10**；`round5-partial` **8/8**（后两者需 `data/characters/danbooru.csv`，缺词表时会各少 1 项，属环境项） |
+
+### O.3 修复 B7 时顺带发现的两个连带故障（都属真实可用性问题）
+
+1. **开启局域网后本机页面整体失效**：`lanGuard` 对所有来源要求令牌，而设置页保存后只刷新 `/app/state` → 该请求 401 → 外壳把整页替换成「后端 API 不可用：…」，**令牌行因此永远看不到**（这正是用户报的症状的真正根因）。
+2. **下次双击 `start.cmd` 起不来**：`scripts/start.ps1` 的就绪探活用 `http://127.0.0.1:<端口>/app/state` 且不带令牌；`lan=true` 一旦落盘，探活恒 401 → 等满 60 秒后打印"后端在 60 秒内没有就绪"并 `exit 1`（还会把后端进程杀掉）。
+
+两者的共同根因是"把本机也当成局域网设备"，与 README §9.2 的口径（"局域网内**其它设备**必须带上令牌"）不符，故按回环豁免修复。
+
+### O.4 一处如实标注的遗留（本轮**未**改）
+
+`web/pages/settings.js` 的保存负载里**总是**回传 `download.hfMirrors / nodeMirrors / jsdelivrMirrors`（值来自 `GET /app/settings`，即后端派生出来的默认梯队），
+而 `server/config.js` 的 `save()` 只在"patch 里没显式给这个键"时才跳过落盘 —— 于是**任何一次保存都会把当时的默认梯队固化进 `data/settings.json`**，
+这正是 §12 决策 ㉛/HANDOVER §5 记录过的那个坑，只是入口从"接口调用"变成了"设置页保存"（实测：本轮保存一次后，`settings.json` 里出现了 6 条 `hfMirrors`）。
+本轮**未改动**（改动会涉及"用户是否编辑过镜像文本框"的判定，属行为变更），建议下一轮按"仅当与装载值不同才回传"的口径修掉。
+
+### O.5 AI 生成声明（本轮新增的交付物）
+
+新增根目录文档 **`AI-DECLARATION.md`**，内容与边界：
+
+| 项 | 说明 |
+|---|---|
+| 声明 | 本项目**自身**的全部代码与文档（`server/`、`web/`、`scripts/`、`installer/`、`assets/` 内清单文本、全部 Markdown）**由 AI 生成**；人类一方负责提出需求、验收行为、决定发布，未逐行重写代码 |
+| 明确排除 | 标准 MIT 许可原文（`LICENSE`）、随包携带的上游原件（`web/vendor/react*.js`、`assets/artists/*.txt`）、以及不随包分发的外部组件与权重（ComfyUI / Anima / Qwen / llama.cpp / 7-Zip / 角色词表）—— 这些各有上游许可，声明不改变其义务（指向 `THIRD_PARTY.md`、`LICENSES/`） |
+| 免责 | 按 MIT 的 "AS IS" 提供，**不因"由 AI 生成"而获得额外保证或额外免责**；生产/再分发/商用前请自行审查 |
+| 可靠性口径 | 明确要求**以实测记录为准**（§13 验证记录与各轮附录、`HANDOVER.md` §10 已知限制），不得仅凭声明判断可靠性 |
+| 落地 | 加入 `scripts/build-core.ps1` 的 `$IncludeFiles`（随核心版交付），并把"交付文档齐全"检查从 4 份扩到 7 项（四份交付文档 + `HANDOVER.md` + `INTERNAL-CONTRACT.md` + `AI-DECLARATION.md`） |
+| 验证 | `node scripts/check.js` 仍 **17/17**（含 `.ps1` BOM/CRLF 红线：改 `build-core.ps1` 后由 `scripts/normalize-ps1.cjs` 重新规范化为 BOM+CRLF，PowerShell 解析 **errors=0**）；`build-core.ps1` 实跑见下 |
+
+**`build-core.ps1` 实跑结果**（本轮真实跑过一遍，确认新文档真的进包、三项扫描仍全绿）：
+
+```
+[打包] 已拷贝：AI-DECLARATION.md
+[打包] 核心版文件数：64
+[打包][OK] 隐私扫描：零命中
+[打包][OK] 权重与压缩包扫描：零命中
+[打包][OK] Python 源文件扫描：零命中（ComfyUI 不随包分发）
+[打包][OK] GPL 代码内联扫描：零命中（注释里引用 ComfyUI 源码路径作为证据不算内联）
+[打包][OK] 交付文档齐全（含 AI-DECLARATION.md）
+[打包][OK] 核心版语法自检通过（server 与面板半）
+exit 0
+```
+
+（跑完后 `release/core` 属构建产物，未留在开发副本里；下次打包会先清空再生成。）
 

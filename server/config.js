@@ -40,7 +40,7 @@ const paths = {
   llmLog: path.join(ROOT, 'logs', 'llama-server.log'),
 };
 
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
 const BUILD_TAG = 'v' + VERSION;
 
 const DEFAULTS = {
@@ -341,7 +341,9 @@ function selfcheck() {
     issues.push({ code: 'artists-missing', level: 'warn', message: '画师清单缺失，随机画师会降级', fix: '恢复 assets/artists/ 下的两份清单 txt。', path: paths.artists });
   }
   const llmExe = path.join(paths.runtimeBin, 'llama', 'llama-server.exe');
-  if (!fsx.isFile(llmExe)) {
+  // v1.1.0（修复 B9）：按推理来源条件化 —— 外接 API 模式（默认来源）根本不需要 llama.cpp，
+  // 无条件报"运行时缺失"会让设置页与日志常驻一条结构性假告警，把真问题淹掉。
+  if (s.llm.provider !== 'api' && !fsx.isFile(llmExe)) {
     issues.push({ code: 'llm-runtime-missing', level: 'warn', message: '本地 LLM 运行时（llama.cpp）尚未安装', fix: '在「本地 LLM」页点「安装运行时」。', path: llmExe });
   }
   const defaultModel = s.llm.defaultModel;

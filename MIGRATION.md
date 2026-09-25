@@ -1,4 +1,4 @@
-# comfy-panel-standalone 迁移指南（v1.0.0）
+# comfy-panel-standalone 迁移指南（v1.1.0）
 
 > **本文档面向谁**：要把这套「超低门槛 ComfyUI 工作流集成应用」从一台 Windows 电脑搬到另一台（或换盘符、改目录名、给朋友拷一份）的使用者与维护者。
 > **一句话作用**：告诉你**带什么、不带什么、到新机器上怎么启动、出问题怎么修**，并给出可照抄的自测步骤。
@@ -371,4 +371,5 @@ pwsh -File .\scripts\start.ps1 -Foreground       # 前台运行，日志直接�
 | v1.0.0（第四轮） | 本轮追加 | 回车即发送；外接 API **四挡推理**（off/low/high/max，实测数据见附录 L）；**上下文只留本地、默认不外发**（历史可整段复制）；工作台重排（LLM 在最上、提示词工具第二、提示词/参考图进左栏、主图变小历史变大、跳转图片文件夹）；默认画师 **大随机**；**切模型不再清空提示词与画师设置**；画师页新增**本机作品**（缩略图 + 一键收藏 + 搜索 + 「本地没有产品」空态）。 |
 | v1.0.0（第五轮） | 本轮修复 | 修复**双击 `start.cmd` 启动失败**的真实缺陷：`start.cmd` 由「LF + UTF-8 中文注释」改为**纯 ASCII + CRLF**（cmd.exe 按 OEM 代码页读批处理文件，中文注释会吃掉行尾 → exit 9009）；`scripts/check.js` 新增 **[4b] 批处理编码红线**（自检 16 → **17 项**）；验收补上「双击等价启动」（`Start-Process <包>\start.cmd`）；MIGRATION 新增 §13 给其他设备的两条硬约束。 |
 | v1.0.0（第六轮） | 本轮调整 | 最小下载挡位的生图模型改为 **`anima-turbo-v1.1.safetensors`**：`installer/models.json` 里 turbo 由 standard 提到 **minimal**、`Anima-3.8B-v1.1` 与 `qwen35_4b` 降到 standard，最小挡位 **14.00 → 5.24 GB**（正好等于"面板默认配置开箱能出图"的最小集），standard / full 不变。 |
+| **v1.1.0**（第八轮） | 本轮修复 | 迁移相关只有一处、但很关键：**局域网开关与"探活被令牌挡下"**。旧版一旦在设置页保存过"允许局域网访问"，`data\settings.json` 里的 `listen.lan=true` + 令牌会让**本机**请求也 401，于是 ① 设置页被外壳换成"后端 API 不可用"、令牌行看不到；② 双击 `start.cmd` 时启动器的 `http://127.0.0.1:<端口>/app/state` 探活拿不到 200，等满 60 秒后判定"后端没有就绪"并杀掉后端 —— 换机后若继承了这个 `settings.json`，面板会**看起来起不来**。现在 `lanGuard` 只对**非回环来源**要令牌，本机不再受影响（其它设备仍必须带 `?token=`）。另：`/app/state` 增加 `llm.provider` / `llm.api` / `listen` 三个字段（老前端读到多出来的字段无副作用）。 |
 | v1.0.0（第七轮） | 本轮修复+新增 | 迁移相关的四点：①**镜像梯队现在是设置项**（`download.hfMirrors / nodeMirrors / jsdelivrMirrors / githubProxies`），换到别的网络环境可以在设置页整套替换，不用改代码；②`save()` **不再把派生出来的梯队（以及等于默认值的 `githubProxies`）写进 `data\settings.json`** —— 拷到别的机器时，`settings.json` 里只有"用户真正设过的值"，新机器会用当前版本的默认梯队（旧行为会把当时那几台机器的镜像列表固化进文件）；③新增 `GET /app/jobs` 与顶栏全局任务条，换机器后长任务（ComfyUI 便携包 1.8 GB / 权重 3.9 GB）在任何一个页面都能看到进度；④新增 **`docs/HANDOVER.md` 项目交接文档**（含迁移/发布/验证手册），接手人先读它。**如实标注**：该环境实测 GitHub 系资源只有 `gh-proxy.com` 与 `down.npee.cn` 两个快源，到别的网络环境请先用设置页的「镜像测速」验一遍。 |

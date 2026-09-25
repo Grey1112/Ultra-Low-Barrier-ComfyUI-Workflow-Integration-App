@@ -15,7 +15,18 @@ const { useState, useEffect, useRef, useCallback } = React;
 // ── 基础工具 ─────────────────────────────────────────────
 
 async function api(path, opts) {
-  const r = await fetch(path, Object.assign({ headers: { 'content-type': 'application/json' } }, opts || {}));
+  const o = Object.assign({ headers: { 'content-type': 'application/json' } }, opts || {});
+  // v1.1.0（修复 B8）：在封装层做一次归一化 —— 项目里对 api() 存在两种调用约定：
+  // post()/put() 会自己 JSON.stringify，另有一批调用点直接传 `{ body: {…} }` 裸对象；
+  // fetch 对普通对象只会 String() 成 "[object Object]"，后端 readJsonBody 一律 400
+  //（现象是"按钮点了没反应"）。这里只序列化纯对象，FormData / Blob / ArrayBuffer /
+  // 已序列化字符串原样透传（panel.js 的图片上传走 FormData，不受影响）。
+  if (o.body && typeof o.body === 'object'
+    && !(o.body instanceof FormData) && !(o.body instanceof Blob)
+    && !(o.body instanceof ArrayBuffer) && !ArrayBuffer.isView(o.body)) {
+    o.body = JSON.stringify(o.body);
+  }
+  const r = await fetch(path, o);
   const text = await r.text();
   let data;
   try { data = text ? JSON.parse(text) : undefined; } catch { data = undefined; }
@@ -260,6 +271,18 @@ function App() {
   const errors = issues.filter((i) => i.level === 'error');
   const setupDone = !!(state.setup && state.setup.completed);
 
+  // v1.1.0（修复 B6）：顶栏 LLM 徽标与对话页同口径 —— 按推理来源判定就绪度，
+  // 并显示实际来源（外接 API 显示模型名，而不是永远读本地运行时）。
+  const llmState = state.llm || {};
+  const llmIsApi = llmState.provider === 'api';
+  const llmReady = llmIsApi
+    ? !!(llmState.api && llmState.api.ok && llmState.api.hasKey)
+    : !!(llmState.runtime && llmState.runtime.ok);
+  const llmSource = llmIsApi ? ((llmState.api && llmState.api.model) || 'API') : 'LLM';
+  const llmBadgeTitle = llmIsApi
+    ? (llmReady ? t('llm.provider.apiReady') : t('llm.provider.apiNeedKey'))
+    : (llmReady ? t('llm.runtime.ready') : t('llm.error.notReady'));
+
   const pageProps = { api, post, put, t, state, settings, refresh, toast, openJobModal, fmtBytes };
 
   const renderPage = () => {
@@ -292,9 +315,9 @@ function App() {
         h('span', { className: 'badge' + (state.comfy.online ? ' good' : '') },
           h('span', { className: 'dot' + (state.comfy.online ? ' on' : ' off') }),
           'ComfyUI ' + (state.comfy.online ? t('shell.online') : t('shell.offline')) + ' · :' + state.comfy.port),
-        h('span', { className: 'badge' + (state.llm.runtime.ok ? ' good' : ' warn') },
-          'LLM ' + (state.llm.runtime.ok ? t('shell.llmReady') : t('shell.llmAbsent'))),
-        state.llm.model ? h('span', { className: 'badge' }, state.llm.model) : null,
+        h('span', { className: 'badge' + (llmReady ? ' good' : ' warn'), title: llmBadgeTitle },
+          llmSource + ' ' + (llmReady ? t('shell.llmReady') : t('shell.llmAbsent'))),
+        !llmIsApi && state.llm.model ? h('span', { className: 'badge' }, state.llm.model) : null,
         // 后台任务指示器：下载/安装跑在服务端，切页面也看得见（点开即进度弹窗）
         h(BackgroundJobs, { api, t }),
         h('span', { className: 'sp' }),
