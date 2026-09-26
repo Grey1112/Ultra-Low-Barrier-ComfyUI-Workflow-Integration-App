@@ -23,6 +23,11 @@ const installer = require('./comfy-install');
 const llm = require('./llm');
 const characters = require('./characters');
 const works = require('./works');
+// v1.3.0：安装中心（状态 / 统一模型目录 / 持久化下载队列 / 自定义模型上传）
+const installState = require('./install-state');
+const installQueue = require('./install-queue');
+const modelCatalog = require('./models-catalog');
+const modelUpload = require('./models-upload');
 
 // 镜像测速同一时刻只允许一个（测速本身很占带宽，并发跑会把彼此的结果都拉低）。
 const TEST = { running: false };
@@ -544,18 +549,206 @@ async function handleApp(req, res, url, body) {
     return sendJson(res, 200, { jobId: job.id });
   }
   if (p === '/app/models/download' && req.method === 'POST') {
-    const job = jobs.run('models', '下载模型', async (j) => installer.installModels(j, body.models || [], {
-      mode: body.mode || load().comfy.mode,
-      externalDir: body.externalDir,
-      modelsFrom: body.modelsFrom,
-      copyMode: body.copyMode,
-      force: !!body.force,
-    }));
-    return sendJson(res, 200, { jobId: job.id });
+    // v1.3.0：模型下载改走**持久化队列**（可暂停/取消/自动换源，进度关窗口也在）。
+    // 仍然返回 jobId（旧前端/脚本不炸），并额外给出 taskIds 与前置提示。
+    const r = installQueue.enqueueModelIds(body.models || [], { autoPrereq: body.autoPrereq });
+    if (r.errors.length && !r.tasks.length) {
+      return sendJson(res, 400, { error: r.errors.map((e) => e.id + '：' + e.error).join('；') });
+    }
+    const first = r.tasks[0];
+    return sendJson(res, 200, {
+      ok: true, jobId: first ? first.id : null, taskIds: r.tasks.map((t) => t.id),
+      addedPrereqs: r.addedPrereqs, existed: r.existed, errors: r.errors,
+    });
   }
   if (p === '/app/models/catalog') {
     const pl = installer.plan({ mode: s.comfy.mode, sel: url.searchParams.get('sel') || '', externalDir: s.comfy.dir });
     return sendJson(res, 200, pl);
+  }
+
+  // ── v1.3.0：安装中心 / 下载队列 / 自定义模型 ──────────────
+  // 组件与模型的真实状态（以磁盘为准；记录只作审计）
+  if (p === '/app/install/state') {
+    const modelList = modelCatalog.list({ mode: s.comfy.mode, externalDir: s.comfy.dir });
+    return sendJson(res, 200, {
+      version: installState.SCHEMA,
+      recorded: installState.read(),
+      components: modelList.components,
+      modelsDir: modelList.modelsDir,
+      comfyDir: modelList.comfyDir,
+      totals: modelList.totals,
+      queue: installQueue.list().counts,
+    });
+  }
+  // 统一模型目录（内置 + 自定义），带 installed / requires / missing / 关联任务
+  if (p === '/app/models/library') {
+    const lib = modelCatalog.list({ mode: url.searchParams.get('mode') || s.comfy.mode, externalDir: url.searchParams.get('dir') || s.comfy.dir });
+    for (const m of lib.items) {
+      const task = installQueue.taskFor(m.id, 'model');
+      m.task = task ? { id: task.id, state: task.state, percent: task.percent || 0, speedKBs: task.speedKBs, error: task.error, note: task.note, candidate: task.candidate, etaSec: task.etaSec } : null;
+    }
+    return sendJson(res, 200, lib);
+  }
+  // 队列快照（安装中心 1–2 s 轮询）
+  if (p === '/app/install/queue') {
+    return sendJson(res, 200, installQueue.list());
+  }
+  // ⚠️ 顺序要紧：`/app/install/queue/clear` 必须先于下面那条"任务级操作"前缀判断，
+  // 否则它会落进 switch 的 default，回报 404「未知的队列操作：clear」——
+  // 这正是用户报的"清空已结束任务无效"（实测：HTTP 404 + 列表纹丝不动）。
+  if (p === '/app/install/queue/clear' && req.method === 'POST') {
+    return sendJson(res, 200, { ok: true, removed: installQueue.clearFinished() });
+  }
+  if (p.startsWith('/app/install/queue/') && req.method === 'POST') {
+    const rest = p.slice('/app/install/queue/'.length);
+    const slash = rest.lastIndexOf('/');
+    const id = slash > 0 ? rest.slice(0, slash) : rest;
+    const action = slash > 0 ? rest.slice(slash + 1) : '';
+    try {
+      switch (action) {
+        case 'pause': return sendJson(res, 200, { ok: true, task: installQueue.pause(id) });
+        case 'resume': return sendJson(res, 200, { ok: true, task: installQueue.resume(id) });
+        case 'retry': return sendJson(res, 200, { ok: true, task: installQueue.retry(id) });
+        case 'retask': return sendJson(res, 200, { ok: true, task: installQueue.retask(id) });
+        case 'cancel': return sendJson(res, 200, { ok: true, ...installQueue.cancel(id, { deleteFile: body.deleteFile !== false }) });
+        case 'move-up': return sendJson(res, 200, { ok: true, task: installQueue.move(id, 'up') });
+        case 'move-down': return sendJson(res, 200, { ok: true, task: installQueue.move(id, 'down') });
+        default: return sendJson(res, 404, { error: '未知的队列操作：' + action + '（可用：pause/resume/retry/retask/cancel/move-up/move-down）' });
+      }
+    } catch (e) {
+      return sendJson(res, 400, { error: e.message });
+    }
+  }
+  // 组件入队（与模型下载完全分开；这就是"组件安装与模型安装分离"的接口面）
+  // v1.3.0（需求 1）：**只有两组** —— 'prereq'（前置组件，整组一个任务）与 'comfyui'（本体，两阶段）。
+  // 界面上就一条任务；组内具体装了什么完全不暴露。`ids` 只保留给排障脚本（会拒绝未知组件）。
+  if (p === '/app/components/enqueue' && req.method === 'POST') {
+    const wanted = Array.isArray(body.groups) && body.groups.length
+      ? body.groups
+      : (Array.isArray(body.ids) && body.ids.length ? body.ids : installState.GROUPS.map((g) => g.id));
+    const out = [];
+    for (const g of wanted) {
+      try {
+        const t = installQueue.enqueueComponent(g);
+        out.push({ group: g, id: t.id, title: t.title, state: t.state });
+      } catch (e) {
+        out.push({ group: g, error: e.message });
+      }
+    }
+    return sendJson(res, 200, { ok: true, groups: out, tasks: out.map((x) => x.id).filter(Boolean) });
+  }
+  // 模型入队（含前置自动加入）
+  if (p === '/app/models/enqueue' && req.method === 'POST') {
+    const r = installQueue.enqueueModelIds(body.ids || [], { autoPrereq: body.autoPrereq });
+    return sendJson(res, 200, {
+      ok: true,
+      tasks: r.tasks.map((t) => ({ id: t.id, refId: t.refId, title: t.title, state: t.state })),
+      addedPrereqs: r.addedPrereqs, existed: r.existed, errors: r.errors,
+    });
+  }
+  // 自定义模型：读取 / 新增 / 改名 / 删除
+  if (p === '/app/models/custom' && req.method === 'GET') {
+    const lib = modelCatalog.list({ mode: s.comfy.mode, externalDir: s.comfy.dir });
+    const rules = {};
+    for (const [k, v] of Object.entries(modelCatalog.ROUTE_RULES)) {
+      rules[k] = { label: v.label, encoder: v.defaultEncoder, vae: v.defaultVae, encoderDim: v.encoderDim, latentChannels: v.latentChannels };
+    }
+    return sendJson(res, 200, {
+      items: lib.items.filter((m) => m.custom),
+      routeRules: rules,
+      destDirs: modelCatalog.DEST_DIRS,
+      modelsDir: lib.modelsDir,
+    });
+  }
+  if (p === '/app/models/custom' && req.method === 'POST') {
+    try {
+      const modelsDir = modelCatalog.modelsDirFor({ mode: s.comfy.mode, externalDir: s.comfy.dir });
+      const entry = modelCatalog.normalizeCustom(body || {});
+      // 只登记"文件确实在该目录里"的模型会让用户很别扭（可能先登记后上传）——
+      // 但必须明确告知状态，所以这里把 exists 一并回给前端。
+      const target = path.join(modelsDir, entry.dest, entry.file);
+      if (fsx.isFile(target)) entry.bytes = fsx.sizeOf(target);
+      installState.putCustom(entry);
+      log.info(`自定义模型已登记：${entry.name}（${entry.file} → ${entry.dest}，${entry.route}）`);
+      return sendJson(res, 200, { ok: true, item: entry, file: target, exists: fsx.isFile(target) });
+    } catch (e) {
+      return sendJson(res, 400, { error: e.message });
+    }
+  }
+  if (p.startsWith('/app/models/custom/') && (req.method === 'PATCH' || req.method === 'PUT' || req.method === 'POST')) {
+    const id = decodeURIComponent(p.slice('/app/models/custom/'.length));
+    try {
+      const cur = installState.getCustom(id);
+      if (!cur) return sendJson(res, 404, { error: '自定义模型不存在：' + id });
+      const next = modelCatalog.normalizeCustom({ ...cur, ...(body || {}) }, cur);
+      installState.putCustom(next);
+      return sendJson(res, 200, { ok: true, item: next });
+    } catch (e) {
+      return sendJson(res, 400, { error: e.message });
+    }
+  }
+  if (p.startsWith('/app/models/custom/') && req.method === 'DELETE') {
+    const id = decodeURIComponent(p.slice('/app/models/custom/'.length));
+    const cur = installState.getCustom(id);
+    if (!cur) return sendJson(res, 404, { error: '自定义模型不存在：' + id });
+    const out = installState.removeCustom(id);
+    // ?deleteFile=1 才动磁盘（默认只删记录）
+    if (String(url.searchParams.get('deleteFile') || '') === '1') {
+      const modelsDir = modelCatalog.modelsDirFor({ mode: s.comfy.mode, externalDir: s.comfy.dir });
+      for (const f of [path.join(modelsDir, cur.dest, cur.file), path.join(modelsDir, cur.dest, cur.file) + '.part']) {
+        try { if (fsx.isFile(f)) { fs.rmSync(f, { force: true }); out.deletedFile = f; } } catch { /* 忽略 */ }
+      }
+    }
+    return sendJson(res, 200, out);
+  }
+  // 弹系统文件选择框（用户不用手打长路径）
+  if (p === '/app/models/pick-file' && req.method === 'POST') {
+    const r = modelUpload.pickLocalFile();
+    return sendJson(res, r.ok ? 200 : 200, r);
+  }
+  // 从本机路径导入（硬链接优先）：body {srcPath, name, dest, route, encoder, vae, register}
+  if (p === '/app/models/import-local' && req.method === 'POST') {
+    try {
+      const modelsDir = modelCatalog.modelsDirFor({ mode: s.comfy.mode, externalDir: s.comfy.dir });
+      const src = String(body.srcPath || '');
+      const r = modelUpload.importLocalFile({ srcPath: src, modelsDir, dest: body.dest || 'diffusion_models', fileName: body.name || path.basename(src) });
+      let item = null;
+      if (body.register !== false) {
+        item = modelCatalog.normalizeCustom({
+          name: body.modelName || path.basename(r.file), file: r.name, dest: r.dest,
+          route: body.route, encoder: body.encoder, vae: body.vae, bytes: r.bytes,
+          origin: 'linked', note: '从本机文件导入' + (r.linked ? '（硬链接）' : '（复制）'),
+        });
+        installState.putCustom(item);
+      }
+      return sendJson(res, 200, { ok: true, ...r, item });
+    } catch (e) {
+      return sendJson(res, 400, { error: e.message });
+    }
+  }
+  // 浏览器直传进度
+  if (p === '/app/models/upload-status') {
+    const st = modelUpload.uploadStatus(url.searchParams.get('uploadId'));
+    if (!st) return sendJson(res, 404, { error: '上传记录不存在：' + url.searchParams.get('uploadId') });
+    return sendJson(res, 200, st);
+  }
+  if (p === '/app/models/register-upload' && req.method === 'POST') {
+    try {
+      const modelsDir = modelCatalog.modelsDirFor({ mode: s.comfy.mode, externalDir: s.comfy.dir });
+      const name = String(body.name || '');
+      const dest = String(body.dest || 'diffusion_models');
+      const file = path.join(modelsDir, modelCatalog.normalizeDest(dest), modelCatalog.normalizeFileName(name));
+      if (!fsx.isFile(file)) return sendJson(res, 400, { error: '目标文件不存在（上传可能未完成）：' + file });
+      const item = modelCatalog.normalizeCustom({
+        name: body.modelName || name, file: path.basename(file), dest, route: body.route,
+        encoder: body.encoder, vae: body.vae, bytes: fsx.sizeOf(file), origin: 'uploaded',
+        note: String(body.note || '').slice(0, 200),
+      });
+      installState.putCustom(item);
+      return sendJson(res, 200, { ok: true, item, file });
+    } catch (e) {
+      return sendJson(res, 400, { error: e.message });
+    }
   }
 
   // ── 任务 ──
@@ -672,6 +865,11 @@ const server = http.createServer((req, res) => {
       return res.end(JSON.stringify({ error: '局域网访问需要令牌：请在地址后加 ?token=<令牌>（设置页可见）' }));
     }
     if (url.pathname.startsWith('/app/')) {
+      // v1.3.0：自定义模型的浏览器直传是**原始字节**（可能几十 GB），绝不能先读成 JSON。
+      // 与 /comfy-panel/api/* 同一条原则：请求体整体直通，只靠查询串传元数据。
+      if (url.pathname === '/app/models/upload' && req.method === 'POST') {
+        return modelUpload.receiveUpload(req, res, url.searchParams);
+      }
       const needBody = ['POST', 'PUT', 'PATCH'].includes(req.method);
       const body = needBody ? await readJsonBody(req) : {};
       return handleApp(req, res, url, body);
@@ -794,6 +992,12 @@ function main() {
   // 唯一能识别它的就是 data/run 下的归属记录：记录存在 + 进程存活 + 命令行确实是 ComfyUI main.py
   // 三条同时对得上才动手；用户自己启动的实例没有任何记录，永远不在候选里。
   try { comfy.cleanupOrphans(); } catch (e) { log.warn('启动清理归属记录时出错（不影响启动）：' + e.message); }
+  // v1.3.0：恢复下载队列（关窗口/重启后端后进度都还在；上次"正在跑"的会变成 paused，等用户继续）
+  try {
+    installQueue.bootstrap();
+    const q = installQueue.list();
+    if (q.counts.total) log.info(`下载队列：${q.counts.total} 个任务（运行 ${q.counts.running} / 排队 ${q.counts.queued} / 暂停 ${q.counts.paused} / 完成 ${q.counts.done} / 失败 ${q.counts.failed}）`);
+  } catch (e) { log.warn('恢复下载队列失败（不影响启动）：' + e.message); }
   const port = Number(process.env.DCP_PORT || s.listen.port || 8788);
   const host = process.env.DCP_HOST || (s.listen.lan ? '0.0.0.0' : '127.0.0.1');
   listen(port, host);

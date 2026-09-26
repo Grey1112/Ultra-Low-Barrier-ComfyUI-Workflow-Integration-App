@@ -14,12 +14,22 @@ const log = require('./util/log');
 // 用户要求：安装过程中每个源都尝试一次，测出下载速度最高的源后稳定用它（别在慢源上反复切换）。
 // 与原有三条换源规则的关系：测速只是**决定起始顺序**；下载中途若发生停滞/变慢，仍按原规则换到
 // 下一个候选（测速排名已把备选也排好序），所以"能下完"这件事没有被削弱。
-const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) comfy-panel-standalone/1.2';
-const PROBE_BYTES = 1 << 20;              // 每个源探 1 MiB
-const PROBE_CAP_MS = 6000;                // 或最多 6 s（谁先到算谁）
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) comfy-panel-standalone/2.1';
+const PROBE_BYTES = 1 << 19;              // 每个源探 512 KiB（v1.3.0：1 MiB → 512 KiB，测速更快）
+const PROBE_CAP_MS = 4000;                // 或最多 4 s（v1.3.0：6 s → 4 s）
+const PROBE_CONCURRENCY = 3;              // v1.3.0：逐源测速改为"最多 3 路并发"，串行会白等十几秒
 const PROBE_MIN_FILE = 8 << 20;           // 文件 < 8 MiB 就不值得先探（探测开销相对太大）
 const PREFER_TTL_MS = 10 * 60 * 1000;     // 同一"来源家族"内 10 分钟内沿用上次测得的最快源
 const preferByFamily = new Map();         // familyKey → { url, via, mbps, at }
+
+// v1.3.0：暂停 / 取消的专用错误码（install-queue.js 据此区分"用户暂停"与"真失败"）。
+const PAUSED = 'DCP_PAUSED';
+const CANCELED = 'DCP_CANCELED';
+function codedError(message, code) {
+  const e = new Error(message);
+  e.code = code;
+  return e;
+}
 
 /** 来源家族：同主机 + 同目录前缀（同一批镜像/同一仓库的不同文件算一家，测一次就够）。 */
 function familyKeyOf(url) {
@@ -95,15 +105,26 @@ async function pickFastest(candidates, { name, say, expectBytes, disabled } = {}
     return false;
   }
   log2(`${name}：先给 ${candidates.length} 个候选源各测一段（约 ${PROBE_BYTES / 1048576} MiB / 最多 ${PROBE_CAP_MS / 1000} s），再按实测速度选最快的稳定使用…`);
+  // v1.3.0：逐源测速改成"最多 PROBE_CONCURRENCY 路并发"。
+  // 为什么：候选动辄 6–10 个，串行探测最坏要等一分钟以上，用户体感就是"点了没反应"。
+  // 并发仍然只探一小段（512 KiB / 4 s）且不写盘，对镜像站的压力可忽略。
   const rows = [];
-  for (const c of candidates) {
-    const r = await probeSpeed(c.url);
-    rows.push({ cand: c, r });
-    const label = c.source === 'official' ? '官方源' : (c.via || c.source);
-    log2(`  测速 ${label}：` + (r.ok
-      ? `${r.mbps.toFixed(2)} MB/s（首字节 ${r.firstByteMs} ms）`
-      : `失败（${r.error || ('HTTP ' + r.status)}）`), r.ok ? 'info' : 'warn');
-  }
+  const queue = candidates.slice();
+  const worker = async () => {
+    for (;;) {
+      const c = queue.shift();
+      if (!c) return;
+      const r = await probeSpeed(c.url);
+      rows.push({ cand: c, r });
+      const label = c.source === 'official' ? '官方源' : (c.via || c.source);
+      log2(`  测速 ${label}：` + (r.ok
+        ? `${r.mbps.toFixed(2)} MB/s（首字节 ${r.firstByteMs} ms）`
+        : `失败（${r.error || ('HTTP ' + r.status)}）`), r.ok ? 'info' : 'warn');
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(PROBE_CONCURRENCY, candidates.length) }, worker));
+  // 行顺序可能与候选顺序不同（并发），按候选原始顺序重排，日志/结果才稳定可读
+  rows.sort((a, b) => candidates.indexOf(a.cand) - candidates.indexOf(b.cand));
   const good = rows.filter((x) => x.r.ok && x.r.mbps > 0).sort((a, b) => b.r.mbps - a.r.mbps);
   if (!good.length) {
     log2(`${name}：所有候选源测速都没拿到数据，回落到原有换源规则逐个重试`, 'warn');
@@ -308,22 +329,40 @@ function humanSpeed(bytesPerSec) {
  * @param {string} [o.sha256]       期望 sha256（校验用，可选）
  * @param {string} [o.label]        人话名称（日志/进度用）
  * @param {object} [o.settings]     设置（镜像与阈值）
- * @returns {Promise<{file:string,bytes:number,source:string,via:string,url:string,ms:number,skipped:boolean}>}
+ * @param {object} [o.control]      **v1.3.0**：{getState:()=>'paused'|'canceled', signal?}
+ *                                  暂停 → 抛 code=DCP_PAUSED（保留 .part 断点，可续传）；
+ *                                  取消 → 抛 code=DCP_CANCELED。
+ * @param {string[]} [o.skipHosts]  **v1.3.0**：不再尝试的来源主机名（「自动换源」用）
+ * @param {number} [o.maxWallMs]    **v1.3.0**：单个候选来源的**墙钟上限**。到点即换源——
+ *                                  这是"慢源上研磨几小时"的根治手段（实测踩过 50 KB/s 磨一天）。
+ * @param {Function} [o.onProgress] **v1.3.0**：进度回调（给队列落盘用）
+ * @returns {Promise<{file:string,bytes:number,source:string,via:string,url:string,ms:number,skipped:boolean,triedHosts:string[]}>}
  */
 async function download(o) {
   const { dest, job, expectBytes, sha256, label } = o;
   const settings = o.settings || {};
   const phase = o.phase || 'download';
   const name = label || path.basename(dest);
+  const control = o.control || null;
+  const skipHosts = new Set((Array.isArray(o.skipHosts) ? o.skipHosts : []).map((h) => String(h).toLowerCase()));
+  const maxWallMs = Math.max(60000, Number(o.maxWallMs) || 0) || 0;
+  const triedHosts = [];
   const say = (msg, level = 'info') => {
     if (job) job.emit({ phase, message: msg, level });
     else log.info(msg);
   };
+  const checkControl = () => {
+    if (!control || typeof control.getState !== 'function') return;
+    const st = control.getState();
+    if (st === 'canceled') throw codedError('任务已被用户取消', CANCELED);
+    if (st === 'paused') throw codedError('任务已暂停（断点已保留，可随时继续）', PAUSED);
+  };
+  checkControl();
 
   // 已就绪（大小匹配）直接跳过——安装器可反复运行。
   if (!o.force && expectBytes && fsx.isFile(dest) && fsx.sizeOf(dest) === expectBytes) {
     say(`已存在且大小匹配，跳过：${name}（${fsx.fmtBytes(expectBytes)}）`, 'ok');
-    return { file: dest, bytes: expectBytes, source: 'cache', via: '', url: '', ms: 0, skipped: true };
+    return { file: dest, bytes: expectBytes, source: 'cache', via: '', url: '', ms: 0, skipped: true, triedHosts };
   }
 
   fsx.ensureDir(path.dirname(dest));
@@ -359,6 +398,21 @@ async function download(o) {
   if (job) {
     job.emit({ phase, level: 'info', message: `${name} 候选来源 ${candidates.length} 个：` + candidates.map((c) => (c.source === 'official' ? '官方源' : c.via)).join(' → ') });
   }
+  // v1.3.0：「自动换源」—— 把队列明确排除（已试过且失败）的主机从候选里剔除，
+  // 这样重新排队时不会又逐个去撞同一批坏源（实测那样要多花好几分钟）。
+  if (skipHosts.size) {
+    const kept = candidates.filter((c) => {
+      try { return !skipHosts.has(new URL(c.url).host.toLowerCase()); } catch { return true; }
+    });
+    if (kept.length && kept.length < candidates.length) {
+      say(`${name}：按「自动换源」跳过 ${candidates.length - kept.length} 个已失败的来源（剩余 ${kept.length} 个）`, 'warn');
+      candidates.length = 0;
+      for (const c of kept) candidates.push(c);
+    } else if (!kept.length) {
+      say(`${name}：所有候选来源都被标记为已失败，本轮全部重试一遍（可能是网络刚刚恢复）`, 'warn');
+    }
+  }
+  checkControl();
   // v1.2.0：先逐源测一段，把最快的排到最前（并在 10 分钟内记住它）；o.noProbe 可显式关掉。
   await pickFastest(candidates, { name, say, expectBytes, disabled: o.noProbe === true });
   const timeoutMs = settings.download?.officialTimeoutMs || 10000;
@@ -382,24 +436,30 @@ async function download(o) {
   for (let ci = 0; ci < candList.length; ci++) {
     const cand = candList[ci];
     const isLast = ci === candList.length - 1;
+    try { triedHosts.push(new URL(cand.url).host.toLowerCase()); } catch { /* 非 URL：忽略 */ }
     if (cand.source === 'mirror' && attempts.length > 0 && !switchedNotice) {
       say(`${name}：官方源不可用（已重试），本次改用镜像来源 ${cand.via} —— 可在「设置 → 下载」里调整镜像与阈值`, 'warn');
       switchedNotice = true;
     }
     for (let round = 1; round <= 2; round++) {
       const tag = cand.source === 'official' ? '官方源' : `镜像 ${cand.via}`;
+      checkControl();          // v1.3.0：每个候选/每一轮之前都先看用户的暂停/取消意图
       try {
         const r = await attempt(cand, {
           dest, timeoutMs, startDeadlineMs, stallDeadlineMs, slowKBs: isLast ? stallKBs : slowKBs, slowWindowMs, expectBytes, name, say, phase, job, round, isLast,
-          index: ci + 1, total: candList.length,
+          index: ci + 1, total: candList.length, control, maxWallMs,
+          onProgress: typeof o.onProgress === 'function' ? o.onProgress : null,
         });
         if (expectBytes && r.bytes !== expectBytes) {
           throw new Error(`大小不符：期望 ${expectBytes}，实际 ${r.bytes}`);
         }
-        if (sha256) {
+        if (sha256 && !o.noSha) {
           say(`校验 sha256：${name}`, 'info');
           const got = await fsx.sha256File(dest, (done) => {
             if (job && expectBytes) job.emitPercent(phase, (done / expectBytes) * 100, `校验中 ${name}`);
+            if (typeof o.onProgress === 'function' && expectBytes) {
+              o.onProgress({ downloaded: done, total: expectBytes, verifying: true, message: `校验中 ${name}` });
+            }
           });
           if (got.toLowerCase() !== sha256.toLowerCase()) {
             fs.rmSync(dest, { force: true });
@@ -407,8 +467,11 @@ async function download(o) {
           }
         }
         say(`${name} 下载完成：${fsx.fmtBytes(r.bytes)}（${tag}，用时 ${(r.ms / 1000).toFixed(1)} s）`, 'ok');
-        return { file: dest, bytes: r.bytes, source: cand.source, via: cand.via, url: cand.url, ms: r.ms, skipped: false };
+        return { file: dest, bytes: r.bytes, source: cand.source, via: cand.via, url: cand.url, ms: r.ms, skipped: false, triedHosts };
       } catch (e) {
+        // v1.3.0：暂停/取消必须**立刻**向上抛（不能当成"这个源失败、换下一个"），
+        // 否则用户点了取消，程序还要把剩下 8 个源各试两遍。
+        if (e && (e.code === PAUSED || e.code === CANCELED)) throw e;
         lastErr = e;
         attempts.push(`${tag}#${round}: ${e.message}`);
         say(`${name} ← ${tag} 失败（第 ${round} 次）：${e.message}`, 'warn');
@@ -540,11 +603,43 @@ async function download(o) {
         die(new Error(`连接已建立但 ${Math.round(ctx.startDeadlineMs / 1000)} s 内只收到 ${fsx.fmtBytes(got - startAt)}（不足 ${fsx.fmtBytes(minStartBytes)}），已换源`));
         return;
       }
+      // ── 规则一 b（v1.3.0 新增）：**服务器没有告知总长度**时的进度看门狗 ──────────
+      // 为什么需要：total 未知（无 content-length 的 chunked 响应）时，规则二永远不触发
+      // （它要求 started=true，而"开始下载"的判定依赖窗口有字节），旧实现于是可以在
+      // 一个 0 字节的卡死连接上无限期挂着 —— 用户看到的就是"进度条一动不动，也不报错"。
+      if (!total && started && now - lastProgressAt > 30000) {
+        die(new Error(`下载中断：服务器未告知总长度，且连续 30 s 没有收到任何新数据（已下 ${fsx.fmtBytes(got)}），已换源`));
+        return;
+      }
       // ── 规则二：下载中途连续 stallDeadlineMs 没有任何新字节 → 换源 ─────────
       // 这条对所有候选都生效（包括最后一个），因为"完全不动"就是坏源。
       if (started && now - lastProgressAt > ctx.stallDeadlineMs) {
         die(new Error(`下载中断：连续 ${Math.round(ctx.stallDeadlineMs / 1000)} s 没有收到任何新数据（已下 ${fsx.fmtBytes(got)}），已换源`));
         return;
+      }
+      // ── v1.3.0：逐任务墙钟上限 ────────────────────────────────────────────
+      // 用户报的"卡死"实测就是这个形态：所有源都只有 50–60 KB/s（能下，只是要一整天）。
+      // 光靠"停滞 15 s"永远判不出来，因为它每分钟都在动。所以给**单个来源**设一个硬上限，
+      // 到点就换下一个源；所有候选都超时则任务失败并给出可操作建议（改为本地归档/外接目录）。
+      if (ctx.maxWallMs && now - reqStartedAt > ctx.maxWallMs) {
+        die(new Error(`单个来源超过时限 ${(ctx.maxWallMs / 3600000).toFixed(1)} h（已下 ${fsx.fmtBytes(got)}${total ? ' / ' + fsx.fmtBytes(total) : ''}，当前均速 ${humanSpeed(avg)}），已换源`));
+        return;
+      }
+      // ── v1.3.0：队列控制（暂停 / 取消）────────────────────────────────────
+      // 1 s 一次的窗口里检查一次用户意图：暂停保留 .part 断点（可续传），取消直接中止。
+      if (ctx.control && typeof ctx.control.getState === 'function') {
+        const st = ctx.control.getState();
+        if (st === 'canceled') { die(codedError('任务已被用户取消', CANCELED)); return; }
+        if (st === 'paused') { die(codedError('任务已暂停（断点已保留，可随时继续）', PAUSED)); return; }
+      }
+      // ── v1.3.0：进度回调（队列据此落盘，关窗口/重启后端都还看得到进度）──
+      if (typeof ctx.onProgress === 'function') {
+        ctx.onProgress({
+          downloaded: got, total, speedKBs: started ? recent / 1024 : null, instantKBs: started ? inst / 1024 : null,
+          windowKBs: avg / 1024, etaSec, waiting: !started, sinceProgressSec,
+          candidate: cand.via || cand.source || 'official', candidateIndex: ctx.index, candidateTotal: ctx.total,
+          elapsedSec: Math.round((now - reqStartedAt) / 1000),
+        });
       }
       // 只有在"整个窗口都覆盖满 且 窗口均速低于阈值"时才判定为慢速并切换来源。
       // 阈值取**本候选**的（最后一个候选只用停滞阈值，避免所有源都慢时把能下完的文件掐掉）。
@@ -681,4 +776,19 @@ async function probe(url, settings, timeoutMs) {
   return results;
 }
 
-module.exports = { download, buildCandidates, probe, speedTest, normalizeDownloadUrl, probeSpeed, pickFastest, preferByFamily };
+module.exports = {
+  download, buildCandidates, probe, speedTest, normalizeDownloadUrl, probeSpeed, pickFastest, preferByFamily,
+  PAUSED, CANCELED, forgetPreferred,
+};
+
+/** v1.3.0：「自动换源」用 —— 忘掉某个来源家族的最快源记忆，让下一次重新真测一遍。 */
+function forgetPreferred(match) {
+  const m = String(match || '').toLowerCase();
+  if (!m) { preferByFamily.clear(); return preferByFamily.size; }
+  let n = 0;
+  for (const key of [...preferByFamily.keys()]) {
+    if (key.toLowerCase().includes(m)) { preferByFamily.delete(key); n++; }
+  }
+  return n;
+}
+

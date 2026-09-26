@@ -120,6 +120,8 @@ function publishLink() {
 
 // "上次成功连上的地址"：断连提示里要告诉用户该用哪个地址重开页面（跨刷新保留在 localStorage）。
 const LAST_ADDR_KEY = 'dcp-last-address';
+// v1.3.0（需求 4）：第一次启动是否已经自动跳到过「安装中心」（只在没跳过时跳一次）
+const FIRST_RUN_KEY = 'dcp-first-run-install';
 
 function rememberAddress(state) {
   const a = resolveServiceAddress(state);
@@ -192,7 +194,7 @@ function installBridge(shell) {
         return { ok: filled > 0, filled, via: 'panel-api' };
       }
       const areas = document.querySelectorAll('.panel-slot textarea');
-      if (!areas.length) { shell.toast(tGlobal('toast.needSetup'), 'warn'); return { ok: false, reason: 'panel-not-mounted' }; }
+      if (!areas.length) { shell.toast(tGlobal('shell.panelNotReady'), 'warn'); return { ok: false, reason: 'panel-not-mounted' }; }
       let filled = 0;
       if (typeof positive === 'string' && areas[0]) { setNativeValue(areas[0], positive); filled++; }
       if (typeof negative === 'string' && areas[1]) { setNativeValue(areas[1], negative); filled++; }
@@ -226,8 +228,8 @@ function installBridge(shell) {
 const TABS = [
   { id: 'workbench', key: 'nav.workbench', icon: '🎛' },
   { id: 'artists', key: 'nav.artists', icon: '🎨' },
+  { id: 'install', key: 'nav.install', icon: '📦' },
   { id: 'settings', key: 'nav.settings', icon: '⚙' },
-  { id: 'wizard', key: 'nav.wizard', icon: '🚀' },
 ];
 
 function App() {
@@ -464,6 +466,16 @@ function App() {
         setLinkLost((cur) => (cur ? null : cur));
         setBootError('');
         setReady(true);
+        // v1.3.0（需求 4）：向导页已移除 —— **第一次启动项目时自动跳到「安装中心」**，
+        // 并让那一页提示用户下载 ComfyUI 等前置组件与对应模型。
+        // 判据：后端 setup 未完成，且本机从未自动跳转过（localStorage 记住了就不再打扰）。
+        try {
+          if (st && st.setup && !st.setup.completed && !localStorage.getItem(FIRST_RUN_KEY)) {
+            localStorage.setItem(FIRST_RUN_KEY, '1');
+            tabTrail.current.push('auto-first-run:install');
+            setTab('install');
+          }
+        } catch { /* 隐私模式/禁用存储：忽略，用户仍可自己点「安装中心」 */ }
       }
     } catch (e) {
       const msg = String((e && e.message) || e || '');
@@ -568,8 +580,8 @@ function App() {
     const map = {
       workbench: () => import('./pages/workbench.js'),
       artists: () => import('./pages/artists.js'),
+      install: () => import('./pages/install.js'),
       settings: () => import('./pages/settings.js'),
-      wizard: () => import('./pages/wizard.js'),
     };
     const cached = pageCache.current[tab];
     if (!map[tab] || (cached && cached.component)) return;
@@ -633,8 +645,8 @@ function App() {
     const map = {
       workbench: () => import('./pages/workbench.js'),
       artists: () => import('./pages/artists.js'),
+      install: () => import('./pages/install.js'),
       settings: () => import('./pages/settings.js'),
-      wizard: () => import('./pages/wizard.js'),
     };
     if (!map[id]) return null;
     const Cached = pageCache.current[id];
@@ -728,9 +740,9 @@ function App() {
               }, t('shell.copyAddress')) : null,
               h('button', { className: 'btn tiny primary', onClick: () => { refresh(); } }, t('shell.linkLostRetry')))) : null,
           !setupDone ? h('div', { className: 'wizard-banner' },
-            h('span', null, t('toast.needSetup')),
+            h('span', null, t('shell.firstRunHint')),
             h('span', { className: 'sp' }),
-            h('button', { className: 'btn primary tiny', onClick: () => go('wizard') }, t('nav.wizard'))) : null,
+            h('button', { className: 'btn primary tiny', onClick: () => go('install') }, t('nav.install'))) : null,
           errors.length ? h('div', { className: 'error' },
             errors.map((i) => i.message + ' → ' + i.fix).join('\n'),
             h('div', null, h('button', { className: 'btn tiny', style: { marginTop: 6 }, onClick: () => go('settings') }, t('nav.settings')))) : null),

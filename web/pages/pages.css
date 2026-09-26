@@ -71,6 +71,15 @@
 .link-lost .error { font-size: 11px; }
 .link-lost-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
 
+/* 首次启动引导（需求 4：向导页移除后由安装中心承担） */
+.install-banner {
+  display: flex; flex-direction: column; gap: 6px;
+  border: 1px solid rgba(91, 157, 255, .45); border-radius: 9px;
+  background: rgba(47, 111, 235, .1); padding: 10px 12px; margin-bottom: 12px;
+}
+.install-banner-title { font-size: 13px; font-weight: 700; color: #cfe0ff; }
+.install-banner-body { font-size: 12px; color: var(--fg2); line-height: 1.6; }
+
 /* ── 画师页 ─────────────────────────────────────────────── */
 .artist-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
 .chip-wrap { display: flex; flex-wrap: wrap; gap: 6px; max-height: 320px; overflow-y: auto; }
@@ -166,3 +175,67 @@
 .dcp-slot .row.tight { gap: 4px; }
 .dcp-slot .btn.tiny { padding: 1px 7px; font-size: 11px; }
 .dcp-slot .card-title { font-size: 12px; }
+
+/* ── v1.3.0：安装中心（组件 / 队列 / 模型库 / 自定义模型）──────────────
+   命名与 v1.2.2 的既有类（.card/.row/.badge/.muted/.hint/.error）风格一致；
+   新增类名一律落在本文件（对应上游红线：渲染树里的 class 必须能在 CSS 里找到）。 */
+.install-list { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+.install-item { display: flex; flex-direction: column; gap: 2px; }
+.install-row {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg3);
+}
+.install-what { font-size: 11px; color: var(--fg3); line-height: 1.5; padding: 0 2px 2px 10px; }
+.install-name { font-size: 12px; min-width: 200px; }
+
+.queue-list { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; max-height: 44vh; overflow-y: auto; }
+.queue-row {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg3);
+}
+.queue-row[data-state="running"] { border-color: rgba(91, 157, 255, .45); background: rgba(47, 111, 235, .08); }
+.queue-row[data-state="failed"] { border-color: rgba(248, 113, 113, .4); }
+.queue-row[data-state="paused"] { border-color: rgba(245, 158, 11, .4); }
+.queue-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.queue-title { font-size: 12px; font-weight: 600; }
+.queue-meta { margin-top: 1px; }
+.queue-bar { height: 7px; border-radius: 4px; background: rgba(255, 255, 255, .1); overflow: hidden; }
+.queue-bar > i { display: block; height: 100%; background: linear-gradient(90deg, #2f6feb, #22c55e); transition: width .3s; }
+.queue-bar.indeterminate > i { animation: dcp-queue-indet 1.6s linear infinite; background: linear-gradient(90deg, rgba(47,111,235,.35), #2f6feb, rgba(47,111,235,.35)); }
+@keyframes dcp-queue-indet { 0% { opacity: .55 } 50% { opacity: 1 } 100% { opacity: .55 } }
+
+/* 模型库：一行一个模型，行内带独立安装按钮与进度 */
+.model-table { display: flex; flex-direction: column; gap: 3px; margin-top: 6px; max-height: 52vh; overflow-y: auto; }
+.model-row {
+  display: grid; grid-template-columns: minmax(200px, 1.4fr) 90px 130px minmax(150px, 1fr) 120px auto;
+  gap: 6px; align-items: center;
+  padding: 5px 7px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg2);
+}
+/* v1.3.0（需求 3）：每个模型自己的下载速度 */
+.model-speed { font-size: 11px; color: var(--fg3); text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.model-row .queue-bar { grid-column: 1 / -1; }
+.model-row .error { grid-column: 1 / -1; }
+.model-row.is-custom { border-color: rgba(139, 92, 246, .4); }
+.model-head {
+  background: transparent; border: 0; padding: 2px 7px;
+  font-size: 11px; font-weight: 700; letter-spacing: .04em; opacity: .72;
+}
+.model-name { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; align-items: center; gap: 6px; }
+.model-size, .model-dest { font-size: 11px; color: var(--fg3); }
+.model-req { font-size: 11px; min-width: 0; }
+.model-actions { display: flex; align-items: center; gap: 6px; justify-content: flex-end; }
+
+/* 自定义模型表单 */
+.custom-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 8px; margin-top: 8px; }
+.custom-form .field.wide { grid-column: 1 / -1; }
+.custom-list { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; }
+.custom-row {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 5px 7px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg3);
+}
+.custom-name { font-size: 12px; font-weight: 600; }
+.custom-row .muted { font-size: 11px; }
+
+/* v1.3.0：安装中心底部的「这些东西分别是什么」说明清单 */
+.install-faq { display: flex; flex-direction: column; gap: 4px; margin: 6px 0 0; padding-left: 18px; }
+.install-faq li { font-size: 11px; color: var(--fg2); line-height: 1.55; }

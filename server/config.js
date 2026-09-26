@@ -35,14 +35,18 @@ const paths = {
   llmModelsFile: path.join(ROOT, 'data', 'llm', 'models.json'),
   llmSessionsFile: path.join(ROOT, 'data', 'llm', 'sessions.json'),
   setupFile: path.join(ROOT, 'data', 'setup.json'),
+  // v1.3.0：安装状态与下载队列（都在 data/ 下 —— 随项目迁移，且绝不含可迁移的路径依赖）
+  installDir: path.join(ROOT, 'data', 'install'),
+  installStateFile: path.join(ROOT, 'data', 'install', 'state.json'),
+  installQueueFile: path.join(ROOT, 'data', 'install', 'tasks.json'),
   serverLog: path.join(ROOT, 'logs', 'server.log'),
   comfyLog: path.join(ROOT, 'logs', 'comfyui.log'),
   llmLog: path.join(ROOT, 'logs', 'llama-server.log'),
 };
 
-// v1.2.2（第十一轮）：退出时连带停掉本程序拉起的 ComfyUI（含跨进程孤儿清理）、
-// 端口冲突不再静默漂移（实际监听端口可从 /app/state 的顶层 port 读到）。
-const VERSION = '1.2.2';
+// v1.3.0（第十二轮）：安装中心 —— 可续装（只装缺的、重装不删权重）、持久化下载队列
+// （暂停/继续/取消/自动换源）、组件与模型分离、模型逐个安装与前置自动入队、自定义模型。
+const VERSION = '1.3.0';
 const BUILD_TAG = 'v' + VERSION;
 
 const DEFAULTS = {
@@ -73,6 +77,24 @@ const DEFAULTS = {
     // 停滞阈值：低于它就说明"真的没在动"，任何候选源都会因此换源；
     // 而 slowThreshold 只用来在前几个候选之间"挑更快的"，最后一个候选不再因"慢"被掐。
     stallKBs: 30,
+    // ── v1.3.0：下载队列（安装中心）─────────────────────────────
+    // 单个任务的**墙钟上限**（小时）。为什么必须有：实测出现过"所有源都慢"时在
+    // 50–60 KB/s 上研磨数小时、1.79 GB 的包 ETA 两万五千秒 —— 那在用户眼里就是卡死。
+    // 到点即中止该源并换下一个；全部候选都失败则任务 failed（并在界面上给出可操作建议）。
+    maxTaskHoursModel: 3,
+    maxTaskHoursComponent: 6,
+    // 下载某模型时，前置（编码器 / VAE / 自定义节点 / 运行时 / 本体）缺失就自动入队。
+    autoPrereq: true,
+    // 队列并发：v1.3.0 起分成**三条并行通道**（见 server/install-queue.js 的 LANES/pump）：
+    //   · comfyui：ComfyUI 本体（默认 1）—— 关键路径上最大的一块，**独立通道**，
+    //              这样"前置组件 / 模型下载挤占 ComfyUI"在结构上不可能发生；
+    //   · prereq ：前置组件整组（默认 2）；
+    //   · model  ：模型权重（默认 2，用户要求"下 ComfyUI 时同时下模型以提高速度"）。
+    // 三条通道互不阻塞，界面上的总速度是它们之和。`queueConcurrency` 是旧键，只作兜底。
+    queueConcurrency: 1,
+    comfyuiConcurrency: 1,
+    prereqConcurrency: 2,
+    modelConcurrency: 2,
     hfMirror: 'https://hf-mirror.com',
     // aifasthub：实测 86–109 MB/s，是 Anima 系权重最快的镜像之一。
     aifasthub: 'https://aifasthub.com',
@@ -210,6 +232,15 @@ function normalize(s) {
   out.download.slowThresholdKBs = clampInt(out.download.slowThresholdKBs, 1, 100000, 200);
   out.download.slowWindowMs = clampInt(out.download.slowWindowMs, 1000, 600000, 30000);
   out.download.stallKBs = clampInt(out.download.stallKBs, 1, 100000, 30);
+  // v1.3.0：下载队列参数（小时上限最小 0.1 h = 6 分钟；并发夹在 1–2）
+  out.download.maxTaskHoursModel = clampNum(out.download.maxTaskHoursModel, 0.1, 48, 3);
+  out.download.maxTaskHoursComponent = clampNum(out.download.maxTaskHoursComponent, 0.1, 96, 6);
+  out.download.autoPrereq = out.download.autoPrereq !== false;
+  out.download.queueConcurrency = clampInt(out.download.queueConcurrency, 1, 2, 1);
+  // v1.3.0：三通道并发（见 DEFAULTS.download 的说明）
+  out.download.comfyuiConcurrency = clampInt(out.download.comfyuiConcurrency, 1, 4, 1);
+  out.download.prereqConcurrency = clampInt(out.download.prereqConcurrency, 1, 4, 2);
+  out.download.modelConcurrency = clampInt(out.download.modelConcurrency, 1, 8, 2);
   out.download.modelscope = String(out.download.modelscope || 'https://modelscope.cn').trim().replace(/\/+$/, '');
   out.download.hfMirror = String(out.download.hfMirror || 'https://hf-mirror.com').trim().replace(/\/+$/, '');
   out.download.aifasthub = String(out.download.aifasthub || 'https://aifasthub.com').trim().replace(/\/+$/, '');
@@ -275,6 +306,13 @@ function normalize(s) {
 
 function clampInt(v, lo, hi, dflt) {
   const n = Number.parseInt(v, 10);
+  if (!Number.isFinite(n)) return dflt;
+  return Math.min(hi, Math.max(lo, n));
+}
+
+/** 浮点夹紧（v1.3.0：墙钟上限这类"小数小时"的配置项）。 */
+function clampNum(v, lo, hi, dflt) {
+  const n = Number(v);
   if (!Number.isFinite(n)) return dflt;
   return Math.min(hi, Math.max(lo, n));
 }
@@ -376,4 +414,4 @@ function selfcheck() {
   return { ok: issues.filter((i) => i.level === 'error').length === 0, issues, external, host, root: paths.root };
 }
 
-module.exports = { paths, load, save, normalize, comfyDir, selfcheck, VERSION, BUILD_TAG, DEFAULTS, deepMerge, clampInt };
+module.exports = { paths, load, save, normalize, comfyDir, selfcheck, VERSION, BUILD_TAG, DEFAULTS, deepMerge, clampInt, clampNum };

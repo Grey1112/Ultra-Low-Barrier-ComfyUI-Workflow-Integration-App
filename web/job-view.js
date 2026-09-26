@@ -113,13 +113,55 @@ export function openJobModal(jobId, title, onDone, onFail) {
 }
 
 /**
+ * v1.3.0：下载队列的轻量进度条（读**服务端**队列快照，因此切页/关窗口都不丢）。
+ * 用法：web/pages/install.js 与向导页的行内进度都用它。
+ */
+export function QueueProgress(props) {
+  const { api, taskId, label } = props;
+  const [task, setTask] = React.useState(null);
+  React.useEffect(() => {
+    if (!taskId) return undefined;
+    let alive = true;
+    const poll = async () => {
+      try {
+        const r = await fetch('/app/install/queue');
+        if (!r.ok) return;
+        const j = await r.json();
+        const hit = (j.items || []).find((x) => x.id === taskId);
+        if (alive) setTask(hit || null);
+      } catch { /* 离线时静默 */ }
+    };
+    poll();
+    const iv = setInterval(poll, 2000);
+    return () => { alive = false; clearInterval(iv); };
+  }, [taskId]);
+  if (!task) return null;
+  const pct = Math.max(0, Math.min(100, task.percent || 0));
+  const speed = typeof task.speedKBs === 'number' && task.speedKBs > 0
+    ? (task.speedKBs >= 1024 ? (task.speedKBs / 1024).toFixed(2) + ' MB/s' : Math.round(task.speedKBs) + ' KB/s')
+    : (task.waiting ? t('queue.waiting') : '');
+  return React.createElement('div', { className: 'job job-compact' },
+    React.createElement('div', { className: 'row' },
+      React.createElement('span', { className: 'muted' }, label || task.title),
+      React.createElement('span', { className: 'sp' }),
+      React.createElement('span', { className: 'muted' }, pct + '%')),
+    React.createElement('div', { className: 'job-bar' }, React.createElement('i', { style: { width: Math.max(2, pct) + '%' } })),
+    React.createElement('div', { className: 'row tight job-nums' },
+      speed ? React.createElement('span', { className: 'badge' }, '↓ ' + speed) : null,
+      task.candidate ? React.createElement('span', { className: 'muted' }, t('job.source') + ' ' + task.candidate) : null,
+      task.error ? React.createElement('span', { className: 'error' }, task.error) : null));
+}
+
+/**
  * 后台任务指示器：显示**服务端**正在跑的任务（下载/安装），点一下打开进度弹窗。
  * 为什么放在外壳：任务活在服务端、进度靠 SSE，页面切走不该让用户"看不见进度了"。
+ * v1.3.0：把**持久化下载队列**也数进来（队列任务与 job 是同一批工作的两种视图）。
  */
 export function BackgroundJobs(props) {
   const { api, t: tt } = props;
   const tFn = typeof tt === 'function' ? tt : t;
   const [jobs, setJobs] = React.useState([]);
+  const [queued, setQueued] = React.useState(0);
 
   React.useEffect(() => {
     let alive = true;
@@ -130,13 +172,27 @@ export function BackgroundJobs(props) {
         const j = await r.json();
         if (alive) setJobs((j.items || []).filter((x) => x.state === 'running'));
       } catch { /* 离线时静默 */ }
+      try {
+        const r2 = await fetch('/app/install/queue');
+        if (!r2.ok) return;
+        const q = await r2.json();
+        const c = q.counts || {};
+        if (alive) setQueued((c.running || 0) + (c.queued || 0));
+      } catch { /* 离线时静默 */ }
     };
     poll();
     const iv = setInterval(poll, 2000);
     return () => { alive = false; clearInterval(iv); };
   }, []);
 
-  if (!jobs.length) return null;
+  if (!jobs.length && !queued) return null;
+  if (!jobs.length) {
+    return React.createElement('button', {
+      className: 'badge good job-chip',
+      title: tFn('install.queue.title'),
+      onClick: () => { if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('dcp-go-tab', { detail: 'install' })); },
+    }, '📦 ' + tFn('install.queue.title') + ' · ' + queued);
+  }
   const j = jobs[0];
   return React.createElement('button', {
     className: 'badge good job-chip',
@@ -144,5 +200,5 @@ export function BackgroundJobs(props) {
     onClick: () => openJobModal(j.id, j.title),
   }, '⏳ ' + (j.title || j.kind) + ' · ' + Math.round(j.percent || 0) + '%'
     + (typeof j.speedKBs === 'number' && j.speedKBs > 0 ? ' · ' + (j.speedKBs >= 1024 ? (j.speedKBs / 1024).toFixed(1) + ' MB/s' : Math.round(j.speedKBs) + ' KB/s') : '')
-    + (jobs.length > 1 ? ' (+' + (jobs.length - 1) + ')' : ''));
+    + (jobs.length > 1 || queued ? ' (+' + (jobs.length - 1 + queued) + ')' : ''));
 }

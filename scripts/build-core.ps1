@@ -174,7 +174,7 @@ if ($GitInit) {
             # 提交身份一律沿用本机 git 全局配置。切勿在此写死占位身份：
             # 曾用 -c user.name='comfy-panel-standalone' -c user.email='noreply@example.com' 覆盖，
             # 导致 GitHub 把提交错算给无关账号（该邮箱被他人账号占用）。
-            & $git.Source commit -q -m 'chore: comfy-panel-standalone core v1.2.2' 2>$null
+            & $git.Source commit -q -m 'chore: comfy-panel-standalone core v1.3.0' 2>$null
             $tracked = (& $git.Source ls-files | Measure-Object).Count
             Write-Ok ("git 仓库就绪，已跟踪文件数：" + $tracked)
             $suspicious = & $git.Source ls-files | Select-String -Pattern '\.(safetensors|gguf|ckpt|pt|pth|onnx|7z|zip)$'

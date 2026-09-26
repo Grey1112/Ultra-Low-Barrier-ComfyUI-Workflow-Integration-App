@@ -23,7 +23,14 @@
       },
       "official": null
     },
-    "note": "Anima 3.8B v2 管线主权重（默认文生图）；需 comfyui-anima-3-8B 自定义节点。"
+    "note": "Anima 3.8B v2 管线主权重（默认文生图）；需 comfyui-anima-3-8B 自定义节点。",
+    "requires": [
+      "runtime",
+      "comfyui",
+      "model:qwen_3_06b_base",
+      "model:qwen_image_vae",
+      "model:qwen35_4b"
+    ]
   },
   {
     "id": "anima-turbo-v1.1",
@@ -64,7 +71,13 @@
         { "host": "wisemodel.cn", "ok": false, "reason": "未托管该仓库" }
       ]
     },
-    "note": "Anima 通用管线，快速草图（面板默认 CFG 1 / 10 步）。"
+    "note": "Anima 通用管线，快速草图（面板默认 CFG 1 / 10 步）。",
+    "requires": [
+      "runtime",
+      "comfyui",
+      "model:qwen_3_06b_base",
+      "model:qwen_image_vae"
+    ]
   },
   {
     "id": "anima-base-v1.0",
@@ -90,7 +103,13 @@
       },
       "official": null
     },
-    "note": "Anima 通用管线官方基座（画风最中性）。"
+    "note": "Anima 通用管线官方基座（画风最中性）。",
+    "requires": [
+      "runtime",
+      "comfyui",
+      "model:qwen_3_06b_base",
+      "model:qwen_image_vae"
+    ]
   },
   {
     "id": "anima-aesthetic-v1.1",
@@ -116,7 +135,13 @@
       },
       "official": null
     },
-    "note": "Anima 通用管线官方美学版（禁用 score_* 标签）。"
+    "note": "Anima 通用管线官方美学版（禁用 score_* 标签）。",
+    "requires": [
+      "runtime",
+      "comfyui",
+      "model:qwen_3_06b_base",
+      "model:qwen_image_vae"
+    ]
   },
   {
     "id": "Anima-2.9B-preview-v1",
@@ -142,7 +167,13 @@
       },
       "official": null
     },
-    "note": "Anima 通用管线 2.9B 预览版（40 层扩展）。"
+    "note": "Anima 通用管线 2.9B 预览版（40 层扩展）。",
+    "requires": [
+      "runtime",
+      "comfyui",
+      "model:qwen_3_06b_base",
+      "model:qwen_image_vae"
+    ]
   },
   {
     "id": "Anima-2.9B-preview-v1_int8_convrot",
@@ -168,7 +199,13 @@
       },
       "official": null
     },
-    "note": "同上 int8 量化版（8 GB 显存友好）。"
+    "note": "同上 int8 量化版（8 GB 显存友好）。",
+    "requires": [
+      "runtime",
+      "comfyui",
+      "model:qwen_3_06b_base",
+      "model:qwen_image_vae"
+    ]
   },
   {
     "id": "qwen_image_2.1_int8_convrot",
@@ -194,7 +231,13 @@
       },
       "official": null
     },
-    "note": "Qwen-Image 2.1 管线主权重（int8 量化）。"
+    "note": "Qwen-Image 2.1 管线主权重（int8 量化）。",
+    "requires": [
+      "runtime",
+      "comfyui",
+      "model:qwen3vl_8b_w4a8",
+      "model:qwen_image_2.1_vae_bf16"
+    ]
   },
   {
     "id": "qwen_3_06b_base",

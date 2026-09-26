@@ -1,4 +1,4 @@
-# 内部接口契约（comfy-panel-standalone v1.2.2）
+# 内部接口契约（comfy-panel-standalone v1.3.0）
 
 > 本文件是前端与后端的冻结契约。改动必须同步更新本文件。
 > 脱敏要求：本文件与全部交付物**不得出现任何真实机器路径**（示例一律用占位符）。
@@ -38,7 +38,12 @@
     "slowWindowMs": 30000,
     "hfMirror": "https://hf-mirror.com",
     "githubProxies": ["https://gh-proxy.com/", "https://ghproxy.net/", "https://ghfast.top/"],
-    "pipIndex": "https://pypi.tuna.tsinghua.edu.cn/simple"
+    "pipIndex": "https://pypi.tuna.tsinghua.edu.cn/simple",
+    // v1.3.0：下载队列（安装中心）
+    "maxTaskHoursModel": 3,          // 单个模型任务的**单来源墙钟上限**（小时）
+    "maxTaskHoursComponent": 6,      // 单个组件任务同上
+    "autoPrereq": true,              // 下载模型时自动把缺失前置一起入队
+    "queueConcurrency": 1            // 1–2；默认串行
   },
   "llm": {
     "contextMessages": 5,            // 0..20
@@ -108,6 +113,28 @@ export default function SettingsPage({ api, t, state, refresh, toast }) { /* ...
 - 下载类帧额外带数值字段（第七轮新增）：`{downloaded,total,speedKBs,instantKBs,windowKBs,etaSec,waiting,sinceProgressSec,candidate,candidateIndex,candidateTotal,elapsedSec}` —— 前端直接用，不再从文案里抠速度。
 - 所有下载必须显式报错，不允许静默失败（红线）。
 
+### 3.1 持久化下载队列（v1.3.0 新增，**改动前必读**）
+
+安装中心与向导里的"每个任务"都是队列里的一个任务，由 `server/install-queue.js` 管理：
+
+- **任务字段**：`{id, key, kind:'model'|'component', refId, title, file, dest, url, urls, urlsFirst, bytes, sha256,
+  state, attempts, triedHosts, downloaded, total, speedKBs, etaSec, candidate, percent, waiting, error, note, addedAt, startedAt, endedAt}`
+- **状态机**：`queued → running → done | failed | paused | canceled`；`paused` 可 `resume` 回 `queued`；
+  `canceled` 的 `resume` 等价于重新排队（本地文件已被删，从头下）。`skipped` 预留给"组件已就绪"。
+- **持久化**：`data/install/tasks.json`（原子写；进度落盘节流 3 s）。**关窗口、重启后端都不丢**：
+  启动时 `bootstrap()` 把上次的 `running` 收敛为 `paused` 并写明"后端重启，已中断（点继续从断点续传）"。
+- **调度（第六批：三通道）**：队列分三条**互不阻塞**的通道，数组顺序即调度优先级（先占坑的先得带宽）—— `lane:"comfyui"`（ComfyUI 本体，独立通道，`download.comfyuiConcurrency` 默认 1）、`lane:"prereq"`（前置组件整组，默认 2）、`lane:"model"`（模型，默认 2）。**为什么 comfyui 必须独立**：早期它与 prereq 共用一条上限为 1 的通道，前置组件一开跑 ComfyUI 就只能干等（用户报的"模型/组件下载挤占 ComfyUI"）。老队列数据在 `bootstrap` 时自动迁移到新通道。
+- **ComfyUI 两阶段**：`phase:"download"` 阶段只调 `downloadPortableArchive()`（不碰 `runtime/comfyui`），完成后设 `phase:"install"` 并通过 `ctl.released` 交还通道（`finish()` 把它重新排成 `queued`），几秒后再由 `pump()` 调 `installFromArchive()` 解压。模型若在此之前下完，前端按"99% + 等待 ComfyUI"展示（后端状态仍是 `done`）。
+- **暂停/取消的传导**：`download({control})` 每 1 s 采样一次用户意图，暂停抛 `code=DCP_PAUSED`
+  （**保留 `.part` 断点**），取消抛 `code=DCP_CANCELED`；两者都**不**被当作"这个源失败、换下一个"。
+- **自动换源（retask）**：清掉 `download.forgetPreferred()` 的最快源记忆 + 把 `triedHosts` 作为
+  `skipHosts` 传给下载引擎 + 重新入队（断点保留，靠 `Range` 续传）。
+- **取消删文件**：`cancel?deleteFile=1`（默认）删除 `dest` 与 `dest.part`；**组件任务只清下载缓存**，
+  绝不删已装好的组件目录（红线）。
+- **模型任务的 `force:true`**：队列任务是"明确要下"，不做"已存在就跳过"的隐式短路。
+- **组件任务**调用 `comfy-install.installComponent(job, refId, opts)`；已就绪的组件会直接回报
+  `skipped:true`（这就是"再次点安装不会重下 1.79 GB"的落点）。
+
 ## 4. HTTP 接口清单
 
 ### 状态
@@ -173,8 +200,30 @@ export default function SettingsPage({ api, t, state, refresh, toast }) { /* ...
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/app/setup/plan?mode=embedded\|external&sel=minimal` | `{mode, steps:[{id,title,detail}], models:[{id,file,bytes,license,tier,installed}], totalBytes, missing:[...]}` |
-| POST | `/app/setup/run` | body `{mode, comfySource:{kind:"portable"\|"archive"\|"dir"\|"git"\|"skip", path?}, models:[ids], copyMode:"link"\|"copy", artists:true, licenses:true} → {jobId}` |
+| POST | `/app/setup/run` | body `{mode, comfySource:{kind:"portable"\|"archive"\|"dir"\|"git"\|"skip", path?}, models:[ids], copyMode:"link"\|"copy", artists:true, licenses:true, force?:boolean\|{runtime,comfyui,nodes,artists,licenses}} → {jobId}`。**v1.3.0 语义变更：只装缺的** —— 已就绪的组件与模型直接跳过（日志写「已就绪，跳过」），`force` 才强制重做；返回值新增 `report:{skippedComponents,skippedModels,failedModels}` |
 | GET | `/app/setup/status` | `{completed, runtime, comfyui, models, artists, llm, comfyDir, modelsDir}` |
+
+### 安装中心：状态 / 模型库 / 下载队列 / 自定义模型（v1.3.0 新增）
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/app/install/state` | `{version, recorded, components:{<id>:{id,title,ok,detail,error?}}, modelsDir, comfyDir, totals, queue}`；`ok` 一律以**磁盘真值**判定（`runtime`=7z 可执行在位；`comfyui`=`main.py` + `python_embeded\python.exe` 都在；`nodes`=自定义节点目录非空；`artists`=两份清单在位；`licenses`=`LICENSES/` 非空） |
+| GET | `/app/models/library` | 统一目录：内置（`installer/models.json`）+ 自定义（`data/install/state.json` 的 `custom`）。每项：`{id,name,file,dest,bytes,sha256,license,tier,custom,installed,installedBytes,path,requires,missing:[{kind,id,title}],ready,route,encoder,vae,task:{id,state,percent,speedKBs,error,note,candidate,etaSec}\|null}`；顶层还有 **`groups`（v1.3.0：界面只显示这一层 —— `[{id:"prereq"\|"comfyui", title, what, members, pending, ok, done, total}]`）**、`components`（逐组件真值，仅供排障/脚本）、`modelsDir/comfyDir/totals/destDirs/routeRules`、**`defaultModelId` / `defaultModelIds`**（首次启动「一键下载组件 + 默认模型」装的集合：默认模型 + 它 `requires` 里的配套模型） |
+| POST | `/app/models/enqueue` | body `{ids:[...], autoPrereq?:bool}` → `{tasks:[{id,refId,title,state}], addedPrereqs:[{kind,id,title,taskId}]（已去重）, existed:[], errors:[]}`；**前置缺失时自动入队** |
+| POST | `/app/components/enqueue` | **v1.3.0（第四批）：只有两组，且每组一个任务** —— body `{groups:["prereq"\|"comfyui"]}`（省略=两组）→ `{ok, groups:[{group,id,title,state}], tasks:[id]}`。`prereq` 是"整组一个任务"（内部逐个装、进度聚合），`comfyui` 是"下载→解压两阶段"任务；传 `ids:[...]` 只接受这两个值（其余组件名一律 400，界面上也不存在） |
+| GET | `/app/install/queue` | `{items:[…], counts:{total,queued,running,paused,done,failed,canceled,skipped}, running, runningCount, groups:[{group,title,taskId,state,percent,phase,message,speedKBs,candidate,done,active,error}], **totalSpeedKBs**（所有在跑任务速度之和）, **runningSpeeds[]**（`{id,title,speedKBs,percent,lane}`）}`（前端 2 s 轮询）。任务字段另含 **`lane`**（`comfyui` / `prereq` / `model`）、**`phase:"download"\|"install"`**、`message`、**`downloadPercent`**（下载阶段 0–100；`percent` = 它的 90%，最后 10% 留给解压） |
+| POST | `/app/install/queue/:id/(pause\|resume\|retry\|retask\|cancel\|move-up\|move-down)` | 控制；`cancel` body `{deleteFile:false}` 可保留本地文件（默认删除）。`retask` = 自动换源 |
+| POST | `/app/install/queue/clear` | 清掉已结束（done/failed/canceled/skipped）的任务 → `{removed}`。⚠️ **实现顺序要求**：这条判断必须在 `/app/install/queue/<id>/<action>` 前缀分支**之前**，否则会被当成一个 id 而回报 404（v1.3.0 第六批修的就是这个） |
+| GET | `/app/models/custom` | `{items:[…自定义条目], routeRules, destDirs, modelsDir}` —— **生图面板读它**（不读 ComfyUI 的 object_info） |
+| POST | `/app/models/custom` | body `{name, file, dest, route, encoder, vae, sourceUrl?, note?}` → `{ok, item, file, exists}`；文件名带路径 / 扩展名不在白名单 / 编码器或 VAE 与管线家族不符 → **400 + 人话原因** |
+| PATCH/PUT | `/app/models/custom/:id` | 改名/改配对（部分更新，其余字段继承） |
+| DELETE | `/app/models/custom/:id?deleteFile=1` | 删记录；`deleteFile=1` 才删磁盘文件（默认只删记录） |
+| POST | `/app/models/pick-file` | 弹系统文件选择框 → `{ok, path, bytes}`，非 Windows/失败时 `{ok:false, hint}`（**不静默**） |
+| POST | `/app/models/import-local` | body `{srcPath, name?, dest, route, encoder, vae, modelName?, register?}` → `{ok, file, bytes, linked, item}`；同卷优先**硬链接** |
+| POST | `/app/models/upload?uploadId&name&dest&modelsDir` | **请求体为原始文件字节**（在 `readJsonBody` 之前分流），落盘 `<modelsDir>/<dest>/<name>`（先写 `.uploading` 再改名）→ `{ok, uploadId, file, rel, total}` |
+| GET | `/app/models/upload-status?uploadId=` | `{state, received, total, percent, file, error}` |
+| POST | `/app/models/register-upload` | body `{name, dest, modelName, route, encoder, vae, note?}` → 落盘文件登记为自定义模型（文件不存在时 400） |
+
+> `POST /app/models/download` **v1.3.0 起委托队列**：返回 `{ok, jobId:第一个任务id, taskIds, addedPrereqs, existed, errors}` —— `jobId` 字段保留，旧前端/脚本不会炸。
 
 ### 面板兼容接口（原样保留）
 | 方法 | 路径 | 说明 |
@@ -206,6 +255,8 @@ export default function SettingsPage({ api, t, state, refresh, toast }) { /* ...
 | `data/llm/sessions.json` | 会话：`{sessions:{<id>:{messages:[...], updatedAt}}, lastSessionId}`（v1.2.1 起带 `lastSessionId`，用于"自动接回上一次对话"；每会话最多 `keepMessages` 条，默认 40 / 可调 2–2000） |
 | `data/run/comfy-owner-<pid>.json` | **v1.2.2**：ComfyUI **进程归属记录**（每个由本程序拉起的实例一份）。字段：`{schema:1, buildTag, pid, ownerPid, startedAtMs, python, mainPy, codeDir, port, spawnCommand}`。`launch()` 成功后立刻写、子进程 `exit` 时立刻删；启动时 `cleanupOrphans()` 只按这里**自己写过**的记录清孤儿。**含本机 pid 与本机绝对路径**，不进交付包、也不需要跟着迁移（见 `MIGRATION.md`） |
 | `data/setup.json` | 向导完成状态 |
+| `data/install/state.json` | **v1.3.0**：安装状态。`{schema, updatedAt, components:{<id>:{ok,verifiedAt,detail,staleReason?}}, models:{<id>:{file,bytes,sha256,verified,at}}, custom:{<id>:{id,name,file,dest,route,encoder,vae,bytes,sha256?,sourceUrl?,origin,note?,createdAt,updatedAt}}}`。**记录只是缓存/审计**：组件与模型的"装没装"一律以磁盘真值为准（文件不在了就当没装，可自愈） |
+| `data/install/tasks.json` | **v1.3.0**：下载队列快照（见 §3.1）。**关窗口/重启后端后进度都还在**；重启时 `running` → `paused` |
 | `logs/server.log` | 后端日志 |
 | `logs/comfyui.log` | ComfyUI 子进程 stdout/stderr |
 | `logs/jobs/<jobId>.log` | 长任务日志（可下载/查看） |

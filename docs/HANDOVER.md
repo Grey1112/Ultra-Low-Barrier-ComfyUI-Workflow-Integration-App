@@ -4,7 +4,7 @@
 > 其余四份文档的分工是：`README.md` 面向使用者、`FEATURES.md` 面向功能核对、`MIGRATION.md` 面向搬迁到别的机器、
 > `docs/FULL-REFERENCE.md` 是逐文件/逐接口/逐决策的完整参考。**本文件只讲"交接"**：谁负责什么、怎么验、怎么发、坑在哪。
 >
-> 版本：**v1.2.2**｜项目名：**超低门槛 ComfyUI 工作流集成应用**（包名 `comfy-panel-standalone`）｜最后更新：第十一轮末
+> 版本：**v1.3.0**｜项目名：**超低门槛 ComfyUI 工作流集成应用**（包名 `comfy-panel-standalone`）｜最后更新：第十二轮末
 >
 > **三个占位符**（本文件的真实路径不写死，避免交付物里出现机器路径）：
 > `<开发副本>` = 你手上的完整项目目录（含 `server\ web\ runtime\ models\ data\`）；
@@ -22,10 +22,10 @@
 | 代码在哪 | 开发副本 `<开发副本>\`；可上传 GitHub 的干净拷贝在 `<开发副本>\release\core\`（由脚本生成，**不要手改**） |
 | 怎么起 | 双击 `start.cmd`（纯 ASCII + CRLF，内部调 `scripts\start.ps1`）→ 浏览器自动开 `http://127.0.0.1:8788/` |
 | 技术栈 | 后端 Node ≥18 CommonJS；前端**无构建步骤**：vendored React 18.3.1 UMD + 原生 ES 模块页面，不用 JSX（`React.createElement`） |
-| 总量 | 后端 13 个文件约 5,200 行；前端 16 个文件（10 个 JS 模块约 5,600 行 + 3 个样式文件 + 2 份词典）；文档 5 份；核心版 **67 个文件**（按 `scripts\build-core.ps1` 白名单口径：7 个目录 + 11 个顶层文件；脚本每次打包会打印「核心版文件数」，以它为最终值） |
+| 总量 | 后端 **17 个文件约 8,040 行**（v1.3.0 新增 `install-state.js` / `models-catalog.js` / `install-queue.js` / `models-upload.js`）；前端 14 个文件（9 个 JS 模块约 6,000 行 + 3 个样式文件共约 700 行 + 2 份词典约 2,070 行；**`pages/wizard.js` 已在 v1.3.0 删除**）；文档 5 份；核心版文件数按 `scripts\build-core.ps1` 白名单口径（7 个目录 + 11 个顶层文件；脚本每次打包会打印「核心版文件数」，以它为最终值） |
 | 自检一条命令 | `<开发副本>\runtime\node\node.exe scripts\check.js` → 期望 **19/19** |
 | **动手改代码之前先看** | **§4 开头那段「每次改动都必须更新版本号」** —— 这是给后续 Agent 的第一条硬规矩，`check.js` `[5b]` 会强制 |
-| 最大风险 | ① 交付物里出现真实机器路径/用户名/API Key；② `.cmd` 写成非 ASCII 或裸 LF（双击必挂）；③ 破坏"可迁移性"（写死绝对路径）；④ 改了代码没推版本号（顶栏徽标与 `check.js` `[5b]` 都会暴露）；⑤ **退了程序却把 ComfyUI 留成孤儿**（v1.2.2 的四层防护不能拆，见 §2 与 §13.2） |
+| 最大风险 | ① 交付物里出现真实机器路径/用户名/API Key；② `.cmd` 写成非 ASCII 或裸 LF（双击必挂）；③ 破坏"可迁移性"（写死绝对路径）；④ 改了代码没推版本号（顶栏徽标与 `check.js` `[5b]` 都会暴露）；⑤ **退了程序却把 ComfyUI 留成孤儿**（v1.2.2 的四层防护不能拆，见 §2 与 §13.2）；⑥ **v1.3.0：重装组件/清理逻辑误删权重目录**（`runtime\comfyui` 同时就是内嵌模式的权重目录，见 §4 红线 15） |
 | 未完成的事 | 见 §10（`anima-turbo` 第 3 个镜像源、跨平台、跨机局域网实测等） |
 
 ---
@@ -38,7 +38,7 @@
 | GitHub 发布版 | `<开发副本>\release\core\` | 脚本生成的干净拷贝（62 文件，含 `.git`），**只包含源码/脚本/文档/画师清单/许可** |
 | 交付拷贝 | `<交付目录>\` | `release\core` 的镜像拷贝 + `.git`，供直接上手/上传 |
 | **AI 生成声明** | `<开发副本>\AI-DECLARATION.md` | **本项目自身全部代码与文档由 AI 生成**；列明第三方边界与免责。已在 `build-core.ps1` 白名单与文档齐全检查里，会随核心版交付 |
-| 交接与验收脚本 | `<验收脚本目录>\*.cjs` | 22 个验收/诊断脚本。**不属于交付物**（`build-core.ps1` 会排除该目录），但接手人必需，见 §7 |
+| 交接与验收脚本 | `<验收脚本目录>\*.cjs` | **27 个**验收/诊断脚本（v1.3.0 新增 5 个 `_v213-*.cjs`）。**不属于交付物**（`build-core.ps1` 会排除该目录），但接手人必需，见 §7 |
 | 网络探测原始数据 | `<验收脚本目录>\probe-{A..F}.{txt,json}`、`round5-mirrors.txt` | 镜像探测的逐条原始记录（含失败原因），排障时比结论更有用 |
 
 > `.scratch` 类目录**不随包发布**是有意的：里面含真实机器路径与探测脚本。但它也**必须交接**，否则接手人无法复现"哪条结论是怎么测出来的"。
@@ -55,8 +55,10 @@ cd <开发副本>
 # ② 起服务（自带便携 Node；不打开浏览器）
 $env:DCP_NO_OPEN='1'; .\runtime\node\node.exe server\index.js
 
-# ③ 另开一个窗口验证
-curl.exe -s http://127.0.0.1:8788/app/state        # 返回 JSON，comfy.online 视 ComfyUI 是否在跑
+# ③ 另开一个窗口验证（**安装中心**与队列都从这两个接口读）
+curl.exe -s http://127.0.0.1:8788/app/state            # 返回 JSON，comfy.online 视 ComfyUI 是否在跑
+curl.exe -s http://127.0.0.1:8788/app/models/library   # 组件两组 + 12 个模型的真实装/未装 + defaultModelIds
+curl.exe -s http://127.0.0.1:8788/app/install/queue    # 队列快照：counts / groups / totalSpeedKBs / runningSpeeds
 ```
 
 - 端口：后端 **8788**，内嵌 ComfyUI **8188**，本地 llama-server **8199**。
@@ -80,46 +82,51 @@ curl.exe -s http://127.0.0.1:8788/app/state        # 返回 JSON，comfy.online 
 
 | 文件 | 行数 | 职责 | 改动风险 |
 |---|---|---|---|
-| `index.js` | ~756 | HTTP 路由与所有 `/app/*`、`/comfy-panel/*` 接口；面板反代；SSE 任务流；**v1.2.2：`POST /app/quit` 优雅退出、端口自增上限 2 次、`/app/state` 顶层 `port`** | 中（接口契约，改完要同步 `docs/INTERNAL-CONTRACT.md`） |
-| `config.js` | ~305 | 路径推导、设置默认值/夹紧/落盘、自检 | **高**（`paths` 与 `DEFAULTS` 是全项目的根） |
-| `download.js` | ~609 | 下载引擎：镜像梯队展开、三条换源规则、断点续传、sha256、完整性防线、镜像测速 | **最高**（所有安装路径都走它） |
-| `comfy-install.js` | ~650 | 向导主流程：7-Zip、ComfyUI 本体、自定义节点、权重、画师清单、许可 | 高 |
-| `comfy.js` | ~576 | ComfyUI 进程管理与布局探测（`detectLayout`）、**v1.2.2 的进程归属记录 / 五条谓词 / `cleanupOrphans` / `stopOwned` / `killOwnedSync`**、artists 清单 | 中（但"只清自己的"是红线，见 §4 红线 14） |
-| `llm.js` | ~912 | llama.cpp 运行时与模型管理、本地/外接两条推理路径、SSE、角色补全接线 | 高 |
-| `characters.js` | ~449 | Danbooru 角色词表 + 563 条中文别名 + 输出补全/规范化 | 中 |
-| `works.js` | ~194 | 扫描 ComfyUI `output` 目录（本机作品）、输出目录三级解析 | 低 |
-| `jobs.js` | ~194 | 长任务（下载/安装）的事件、列表、SSE 广播 | 中 |
-| `store.js` | ~262 | `data/` 下的 JSON 读写（画师、分组、LLM 模型、会话、setup） | 低 |
-| `util/fsx.js` | ~141 | 文件/哈希/格式化工具（含原子写） | 低 |
-| `util/zip.js` | ~128 | 7-Zip 定位与解压、zip 解压、单根提升 | 低 |
-| `util/log.js` | ~49 | 日志 | 低 |
+| `index.js` | ~1024 | HTTP 路由与所有 `/app/*`、`/comfy-panel/*` 接口；面板反代；SSE 任务流；**v1.2.2：`POST /app/quit` 优雅退出、端口自增上限 2 次、`/app/state` 顶层 `port`**；**v1.3.0：安装中心一组接口（`/app/install/state`、`/app/models/library`、`/app/install/queue/*`、`/app/components|models/enqueue`、`/app/models/custom*`、`/app/models/upload`（原始字节，在 `readJsonBody` 之前分流）、`/app/models/pick-file`）** | 中（接口契约，改完要同步 `docs/INTERNAL-CONTRACT.md`） |
+| `config.js` | ~417 | 路径推导、设置默认值/夹紧/落盘、自检 | **高**（`paths` 与 `DEFAULTS` 是全项目的根） |
+| `download.js` | ~794 | 下载引擎：镜像梯队展开、三条换源规则、断点续传、sha256、完整性防线、镜像测速 | **最高**（所有安装路径都走它） |
+| `comfy-install.js` | ~1111 | 向导主流程：7-Zip、ComfyUI 本体、自定义节点、权重、画师清单、许可；**v1.3.0：`runSetup` 只装缺的（`force` 才重做）、`installComfyUI` 已装即跳过且重装先把 `models\` 挪走再合并回来、`installComponent` 供安装中心单装某组件、`installPrereqGroup` 把整组前置当一个任务跑、`downloadPortableArchive` / `installFromArchive` 把下载与解压拆成两阶段、归档/可执行文件签名校验、模型逐个失败即跳过** | 高 |
+| `comfy.js` | ~628 | ComfyUI 进程管理与布局探测（`detectLayout`）、**v1.2.2 的进程归属记录 / 五条谓词 / `cleanupOrphans` / `stopOwned` / `killOwnedSync`**、artists 清单 | 中（但"只清自己的"是红线，见 §4 红线 14） |
+| `llm.js` | ~976 | llama.cpp 运行时与模型管理、本地/外接两条推理路径、SSE、角色补全接线 | 高 |
+| `characters.js` | ~486 | Danbooru 角色词表 + 563 条中文别名 + 输出补全/规范化 | 中 |
+| `works.js` | ~206 | 扫描 ComfyUI `output` 目录（本机作品）、输出目录三级解析 | 低 |
+| `jobs.js` | ~204 | 长任务（下载/安装）的事件、列表、SSE 广播 | 中 |
+| `store.js` | ~271 | `data/` 下的 JSON 读写（画师、分组、LLM 模型、会话、setup） | 低 |
+| `util/fsx.js` | ~145 | 文件/哈希/格式化工具（含原子写） | 低 |
+| `util/zip.js` | ~132 | 7-Zip 定位与解压、zip 解压、单根提升 | 低 |
+| `util/log.js` | ~50 | 日志 | 低 |
+| `install-state.js` | ~279 | **v1.3.0**：组件/模型/自定义模型的安装状态（`data/install/state.json`）+ **磁盘真值校验**（`verifyComponent` / `markComponent` / `markComponentStale` / `markModel` / `putCustom`…） | 中（"已装好"的判据是**可续装**的地基，改之前先读 §4 红线 15） |
+| `models-catalog.js` | ~326 | **v1.3.0**：统一模型目录（内置 + 自定义）、前置展开（`requiresOf` / `prerequisiteRefs`）、管线家族校验（`validatePairing`）、自定义条目归一化（`normalizeCustom`，含**防目录穿越**的文件名与目标白名单） | 中（数据契约） |
+| `install-queue.js` | ~790 | **v1.3.0**：持久化下载队列（`data/install/tasks.json`）。**三通道调度**（`LANES = comfyui(优先,1) / prereq(2) / model(2)`，互不阻塞）—— **ComfyUI 有独立通道**，所以"前置组件或模型挤占 ComfyUI"在结构上不可能；ComfyUI 走"下载→解压"两阶段（`ctl.released` 交还通道）；暂停/继续/取消/自动换源/上下移、**前置自动入队**、重启恢复（`bootstrap` 把 `running` 收敛成 `paused`，并把老数据迁到新通道）；`list()` 额外给出 `totalSpeedKBs` 与 `runningSpeeds` | **高**（所有安装路径都走它，改之前先读 §4 红线 18） |
+| `models-upload.js` | ~203 | **v1.3.0**：自定义模型的本地上传 —— 系统文件选择框（PowerShell `OpenFileDialog`）、本机路径导入（硬链接优先 + 可中断复制）、浏览器直传（原始字节，`.uploading` → 校验 → 改名） | 中 |
 
-> 行数为 v1.2.2 末的实测值（`Get-ChildItem server -Recurse -Filter *.js` + 逐文件计数），**每次改动请顺手核对一次**。
+> 行数为 **v1.3.0（第七批）末**的实测值（`Get-ChildItem server -Recurse -Filter *.js` + 逐文件计数），**每次改动请顺手核对一次**。
 
 ### 3.2 前端（`web/`，无构建步骤）
 
 | 文件 | 行数 | 职责 |
 |---|---|---|
 | `index.html` | 23 | 唯一页面：挂载点 + 引入 vendored React/ReactDOM + `app-shell.js` |
-| `app-shell.js` | ~653 | 外壳：**四个常驻标签页**（切页只隐藏不卸载，见 §3.4）、顶栏（品牌/后台任务条/日志/语言/**v1.2.2 的「服务地址」徽标**）、全局 toast（**同文案 30 s 节流**）、**断连 banner 与 `window.__DCP_LINK__`**、画师数据桥（`__DCP_SAVE_ARTISTS__` / `__DCP_ARTIST_GROUP__` / `__DCP_CREATE_GROUP__`）+ 排障钩子 `window.__DCP_SHELL__` |
-| `panel.js` | ~2253 | **生图面板**（从早期插件形态 `lib/client.js` 移植 + 锚点补丁）：三栏 1:1:2、图构建器、画师、参数 |
-| `panel-host.js` | 60 | 给 `panel.js` 提供 `require("react")` 之类的垫片 |
-| `job-view.js` | 142 | 长任务视图：`JobProgress`（进度/速度/ETA/来源）、`openJobModal`、`BackgroundJobs`（顶栏任务条） |
-| `i18n.js` | 257 | DOM 翻译器：`ui` 词典 + 面板 `panel` 词典 + 短语规则；中英切换 |
-| `pages/workbench.js` | 60 | 工作台：单面板 + layout 切换 + 把 LLM 页 portal 进提示词栏 |
-| `pages/llm.js` | ~1101 | LLM 页：对话（SSE + **思考过程块** + **历史会话侧栏**）、推荐目录、模型管理、外接 API 设置、角色词表 |
-| `pages/artists.js` | ~464 | 画师页：收藏/黑名单/自定义、分组（建/展开成员/移出/重命名/删）、本机作品网格、搜索 |
-| `pages/settings.js` | ~446 | 设置页：ComfyUI 内外接、监听、**下载源与镜像梯队 + 镜像测速**、LLM 配置 |
-| `pages/wizard.js` | ~185 | 首次运行向导：档位选择、安装进度（含"切走再切回重挂任务"） |
-| `styles/shell.css`、`pages/pages.css`、`styles/workbench.css` | ~261/165/188 | 样式（**新增类名必须写进这三个文件之一**；`.tab-pane` / `.tab-hidden` 在 shell.css，`.thinking-block` / `.session-row` / **v1.2.2 的断连 banner 与「服务地址」徽标**在 pages.css） |
-| `i18n/zh.json`、`i18n/en.json` | ~845/1079 | 词典（**键集必须完全一致**，由 `check.js` 强制） |
+| `app-shell.js` | ~759 | 外壳：**四个常驻标签页**（工作台 / 画师 / 安装中心 / 设置，切页只隐藏不卸载，见 §3.4；**v1.3.0 起「向导」已被「安装中心」取代，且首次启动自动跳过去**）、顶栏（品牌/后台任务条/日志/语言/**v1.2.2 的「服务地址」徽标**）、全局 toast（**同文案 30 s 节流**）、**断连 banner 与 `window.__DCP_LINK__`**、画师数据桥（`__DCP_SAVE_ARTISTS__` / `__DCP_ARTIST_GROUP__` / `__DCP_CREATE_GROUP__`）+ 排障钩子 `window.__DCP_SHELL__` |
+| `panel.js` | ~2718 | **生图面板**（从早期插件形态 `lib/client.js` 移植 + 锚点补丁）：三栏 1:1:2、图构建器、画师、参数 |
+| `panel-host.js` | ~71 | 给 `panel.js` 提供 `require("react")` 之类的垫片 |
+| `job-view.js` | ~204 | 长任务视图：`JobProgress`（进度/速度/ETA/来源）、`openJobModal`、`BackgroundJobs`（顶栏任务条，v1.3.0 起也把**持久化队列**的计数算进去）、`QueueProgress` |
+| `i18n.js` | ~268 | DOM 翻译器：`ui` 词典 + 面板 `panel` 词典 + 短语规则；中英切换 |
+| `pages/workbench.js` | ~66 | 工作台：单面板 + layout 切换 + 把 LLM 页 portal 进提示词栏 |
+| `pages/llm.js` | ~1168 | LLM 页：对话（SSE + **思考过程块** + **历史会话侧栏**）、推荐目录、模型管理、外接 API 设置、角色词表 |
+| `pages/artists.js` | ~481 | 画师页：收藏/黑名单/自定义、分组（建/展开成员/移出/重命名/删）、本机作品网格、搜索 |
+| `pages/settings.js` | ~457 | 设置页：ComfyUI 内外接、监听、**下载源与镜像梯队 + 镜像测速**、LLM 配置 |
+| ~~`pages/wizard.js`~~ | — | **v1.3.0（第四批）已删除**：向导页移除，首次启动改为自动跳到「安装中心」（localStorage `dcp-first-run-install`），由该页顶部的引导横幅承担"一键下载组件 + 模型" |
+| `pages/install.js` | **~605（v1.3.0 新增）** | **安装中心**（也是首次启动的落点）：**只有两条组件任务**（前置组件 / ComfyUI 本体，界面不出现任何具体组件名）+ 下载队列（暂停·继续·取消·自动换源·上下移 + **总速度徽标** + 逐行速度/阶段）+ 模型库（逐行安装按钮、前置徽标、**逐行速度与"等待 ComfyUI"**）+ 自定义模型（三种来源 + 编码器·VAE·管线） |
+| `styles/shell.css`、`pages/pages.css`、`styles/workbench.css` | ~265/241/192 | 样式（**新增类名必须写进这三个文件之一**；`.tab-pane` / `.tab-hidden` 在 shell.css，`.thinking-block` / `.session-row` / **v1.2.2 的断连 banner 与「服务地址」徽标**在 pages.css） |
+| `i18n/zh.json`、`i18n/en.json` | ~909/1158 | 词典（**键集必须完全一致**，由 `check.js` 强制） |
 | `vendor/react*.js` | — | React 18.3.1 UMD（不联网、不构建） |
 
 ### 3.3 其它
 
 | 目录/文件 | 内容 |
 |---|---|
-| `installer/models.json` | 12 个权重的目录：`id/file/dest/bytes/sha256/tier/license/officialUrl/mirrors/fastMirrors/verified` |
+| `installer/models.json` | 12 个权重的目录：`id/file/dest/bytes/sha256/tier/license/officialUrl/mirrors/fastMirrors/verified`，**v1.3.0 每条新增 `requires`**（前置组件与前置模型，显式可审计：`runtime`/`comfyui`/`node:comfyui-anima-3-8B`/`model:<id>`） |
 | `installer/llm-models.json` | 3 个推荐 GGUF（4B/9B/2B）+ 镜像 + sha256（**只给链接，不自动下载**） |
 | `scripts/start.ps1` | 启动器：找/下载便携 Node → 起后端 → 探活 → 开浏览器 → 托盘 |
 | `scripts/bootstrap.ps1` | 便携 Node 引导（**独立实现同一套镜像梯队 + 10 s 无进展换源**，因为此时还没有 Node 可跑） |
@@ -145,15 +152,15 @@ curl.exe -s http://127.0.0.1:8788/app/state        # 返回 JSON，comfy.online 
 >
 > | # | 文件 | 要改的东西 |
 > |---|---|---|
-> | 1 | `server/config.js` | `const VERSION = '1.2.2';`（顶栏/接口 `/app/state` 的 `version`、`buildTag` 都由它派生） |
-> | 2 | `package.json` | `"version": "1.2.2"` |
-> | 3 | `web/panel.js` | `const BUILD_TAG = "v1.2.2";` ← **最容易漏的一处**：面板头部那个「🎨 … v1.2.2」徽标只读它 |
+> | 1 | `server/config.js` | `const VERSION = '1.3.0';`（顶栏/接口 `/app/state` 的 `version`、`buildTag` 都由它派生） |
+> | 2 | `package.json` | `"version": "1.3.0"` |
+> | 3 | `web/panel.js` | `const BUILD_TAG = "v1.3.0";` ← **最容易漏的一处**：面板头部那个「🎨 … v1.3.0」徽标只读它 |
 >
 > **为什么必须每次改**：面板是**静态直托管、无 ?rev= 快照**的（改代码刷新即生效），所以版本号是用户与验收者判断
 > "页面加载的到底是哪一份代码"的**唯一凭据**；不推版本号就会出现"后端已是新版、顶栏还是旧版""改了但看不出改没改"。
 > v1.2.1 发版时真实踩过：只改了前两处，用户顶栏仍显示 1.2.0。
 >
-> **怎么推**：修复/小改 → 末位 +1（1.2.1 → 1.2.2）；新增功能/行为变更 → 中间位 +1（1.2.x → 1.3.0 或按你的口径）；
+> **怎么推**：修复/小改 → 末位 +1（1.3.0 → 1.3.1）；新增功能/行为变更 → 中间位 +1（1.3.x → 1.4.0 或按你的口径）；
 > 不兼容变更 → 首位 +1。**不要**回退版本号，也不要为了"过自检"把三处改成同一个旧值。
 >
 > **同回合还要做的收尾**（属同一件事，别拆开）：
@@ -178,6 +185,12 @@ curl.exe -s http://127.0.0.1:8788/app/state        # 返回 JSON，comfy.online 
 | 12 | **常驻标签页的 key 必须稳定**：`renderPage` 传给页面的 `key` 只能是 tab id，**不能掺 `renderKey`** | `renderKey` 会在按需加载完成时自增；掺进 key 会把刚挂载的页面整体重建，"切页保留提示词/对话"当场失效 | 人工（`web/app-shell.js` 的注释里写明了原因） |
 | 13 | **面板里的 `useState` 只能追加在 hook 链末尾**（"hook 索引只增不移"） | 冒烟测试按数字索引给 `useState` 喂值，插进中间会让后续索引整体错位 | 人工（`web/panel.js` 的【冒烟红线】注释）+ 冒烟脚本 |
 | 14 | **只终止本程序拉起的 ComfyUI**（v1.2.2）：退出路径必须连带停掉它（`comfy.stopOwned` / `killOwnedSync`），清理只能依据 `data/run/comfy-owner-<pid>.json` **归属记录 + 五条谓词**（记录可解析 → 进程存活 → 命令行含 `main.py` → 命令行反推入口目录 == 记录 `codeDir`（或命令行含记录 `mainPy`）→ pid ≠ 自身），任一条不满足**只记 WARN、绝不动手**；**绝不允许**按"谁在监听 `comfy.port`"清理 | 用户自己启动的 ComfyUI 没有任何记录，按端口清理会**当场误杀**用户的实例（旧 `stop()` 就是这个行为）；反之漏清只是留一个孤儿，下次启动还能收 —— 宁可漏清，绝不误杀 | 人工 + `comfy.verifyOwnership()`；独立复核 `docs/ROUND11-VERIFY.md` §6（六条反例 + 两条红线全过） |
+| 15 | **重装组件不得删除权重**（v1.3.0）：`installComfyUI` 只在「明确 `force`」或「磁盘上确实没有可用的 `main.py` + `python_embeded\python.exe`」时才动 `runtime\comfyui`；真要重装时必须**先把 `ComfyUI\models\` 与 `runtime\comfyui\models\` 临时挪到 `runtime\_dl\_comfyui-models-bak\`，解压成功或失败都要合并回原处**；任何新写的"清理/重置"逻辑都不得 `rmSync` 整个 `runtime\comfyui` | `runtime\comfyui` **同时是内嵌模式的权重目录** —— 一次重装就会把用户下了几小时/几十 GB 的模型全删掉（用户报的恶性 bug 就是这个形态：`runtime\comfyui` 只剩一个 `ComfyUI\output` 空壳、`models\` 空空如也） | 人工 + 沙箱 harness（`.scratch\_v213-accept.cjs` 的"占位权重在强制重装后仍在"断言） |
+| 16 | **安装状态以磁盘为准，不信任记录**（v1.3.0）：`install-state.verifyComponent()` / `models-catalog.diskState()` 必须每次都查文件系统；`data/install/state.json` 只当缓存与审计 | 反过来（只信记录）会出现"记着装了、其实文件早被删了"→ 用户点安装却什么都不发生，比重复下载更难查 | 人工 + 沙箱 harness |
+| 17 | **取消组件任务只清下载缓存**（v1.3.0）：`install-queue.cancel()` 对 `kind==='component'` 只调 `markComponentStale()` 并删下载产物/`*.part`，**绝不删已装好的组件目录**；同时把 `archivePath` 清空、`phase` 退回 `download` | 用户对"取消下载"的预期是停下载、删半成品，不是卸载 ComfyUI；不清 `archivePath` 的话下一次会拿一个已被删掉的归档去解压 | 人工 |
+| 18 | **ComfyUI 必须有自己的调度通道**（v1.3.0 第六批）：`server/install-queue.js` 的 `LANES` 里 `comfyui` 必须独立于 `prereq`（数组顺序 = 优先级），谁也**不许**把它并回 `prereq` 或让两条通道共享并发上限 | 早期 `prereq`（前置组件）与 `comfyui` 共用上限 1 的通道 → 前置组件一开跑，1.79 GB 的 ComfyUI 就只能排队干等（用户报的"模型下载挤占 ComfyUI"就是这个形态，实测 `prereq[running]` + `comfyui[queued]`） | 人工 + `.scratch\_v213-b6.cjs` 的"ComfyUI 有独立通道且在跑 + 模型通道同时在下"断言 |
+| 19 | **`/app/install/queue/clear` 的路由必须在前缀分支之前**（v1.3.0 第六批）：`server/index.js` 里这条精确匹配要写在 `/app/install/queue/` 前缀分支**前面**，否则它会被当成一个任务 id 而回报 404「未知的队列操作：clear」——现象是"按钮点了完全没反应" | 实测踩过：前端拿到 404 只弹一条 toast，队列纹丝不动；这类"看起来是前端问题、其实是路由顺序"的 bug 很难从界面看出来 | 人工 + `.scratch\_v213-b6.cjs`（接口 + **界面按钮**双重断言） |
+| 20 | **新增下载路径必须传 `onProgress`**（v1.3.0 第七批）：任何新写的"下载一个文件"的入口（例如把某个组件拆成"下载/解压"两阶段时新加的那条）都要把 `opts.onProgress` 一路传给 `download.download()` | 漏一次的现象是"这个任务永远显示 0% 且没有速度"，而其它任务都正常 —— 看起来像那个文件的问题，其实只是回调没接上（实测：ComfyUI 1.79 GB 的主下载漏传，界面一直 0%） | 人工 + `.scratch\_v213-b7.cjs`（本地假镜像，断言速度/百分比/candidate） |
 
 ---
 
@@ -190,7 +203,9 @@ curl.exe -s http://127.0.0.1:8788/app/state        # 返回 JSON，comfy.online 
 | `data/llm/models.json`、`sessions.json` | LLM 模型清单、会话 | ❌ |
 | `data/characters/` | 角色词表（3.5 MB，可重下） | ❌ |
 | `data/run/comfy-owner-<pid>.json` | **v1.2.2**：ComfyUI 进程归属记录（pid + 本机绝对路径 + 启动时刻），每个本程序拉起的实例一份；退出/子进程退出时删除 | ❌（**含本机路径，别拷别传**） |
-| `data/setup.json` | 向导完成状态 | ❌ |
+| `data/setup.json` | 向导完成状态（v1.3.0 起另带 `failedModels` 与 `componentsAt`） | ❌ |
+| `data/install/state.json` | **v1.3.0**：安装状态（组件/模型/自定义模型）。**判定以磁盘为准**，这份只是缓存与审计 | ❌ |
+| `data/install/tasks.json` | **v1.3.0**：下载队列快照（含 `dest` 这类本机绝对路径）。**关窗口/重启后端后进度都还在** | ❌（含本机路径，别拷别传） |
 | `logs/` | 服务 / ComfyUI / llama-server / 任务日志 | ❌ |
 | `runtime/` | 便携 Node、内嵌 ComfyUI（数 GB）、7-Zip、llama.cpp | ❌ |
 | `models/` | 本地 GGUF | ❌ |
@@ -292,7 +307,13 @@ GitHub 代理支持前缀式（`https://gh-proxy.com/`，自动补 `{url}`）、
 | `round5-mirrors.cjs` | 镜像梯队结构 + 每组件逐源实测 100 MiB（**耗时 10–20 分钟**） | 结构 11 项全过；逐源结果见 `round5-mirrors.txt` |
 | `gen-test.cjs` | **端到端出图**：面板图构建器 → 反代 → ComfyUI → 取图 | `SMOKE_OK`（开发机 5.0 s / 253,327 B PNG） |
 | `llm-test.cjs` | 本地 llama.cpp 对话（需已装运行时与 GGUF） | `LLM_OK` |
-| `zero-wizard-test.cjs` / `migration-test.cjs` / `ui-e2e.cjs` | 从零向导、迁移、外壳端到端 | 早期轮次基线 |
+| `zero-wizard-test.cjs` / `migration-test.cjs` / `ui-e2e.cjs` | 从零安装（当时叫"向导"）、迁移、外壳端到端 | 早期轮次基线（"向导"页已在 v1.3.0 换成「安装中心」，这两个脚本只作历史参考） |
+| `_v213-accept.cjs` | **v1.3.0 后端端到端**：安装状态/磁盘真值、只装缺失项、重装不删权重、队列暂停/取消/换源、重启恢复、前置自动入队、双通道并发、清空已结束 | **38/38** |
+| `_v213-ui.cjs` | **v1.3.0 安装中心 UI**（无头 Edge）：只两组、无组件名泄漏、队列行/控制按钮、切页不重载 | **23/23** |
+| `_v213-fnr.cjs` | **v1.3.0 首次启动**：自动跳到安装中心、引导横幅、点一次后组件各一条任务、总速度锚点、模型行速度列 | **15/15** |
+| `_v213-b5.cjs` | **默认模型集**（`anima-turbo-v1.1` + 编码器 + VAE）与「LLM」改名 | **10/10** |
+| `_v213-b6.cjs` | **清空已结束任务 / 取消下载 / ComfyUI 独立通道**（接口 + 真实界面按钮双断言） | **10/10** |
+| `_v213-b7.cjs` | **ComfyUI 下载速度与百分比**（本地起 1.79 GB / 25 MB/s 假镜像，经队列实测） | **9/9** |
 | `consistency-check.cjs` | 源工程 ↔ `release\core` ↔ 交付拷贝 三方一致 + git 状态 + 包内自检 | 发布前必须全绿 |
 | `release-scan.cjs` | 交付包密钥/路径扫描（含与真实 Key 逐文件比对） | `CLEAN` |
 
@@ -313,11 +334,13 @@ GitHub 代理支持前缀式（`https://gh-proxy.com/`，自动补 `{url}`）、
 | **改界面文案** | 改 `web/i18n/zh.json` + `en.json` **两份** | 键集必须一致；面板文案走 `panel` 词典或 `panelPhrases` 规则；改完跑 `check.js [3]` |
 | **加一个界面字符串** | 两个 json 各加一条，代码里 `t('xxx')` | 别直接写中文字面量 |
 | **改默认生图型号/档位** | 改 `installer/models.json` 的 `tier`；默认型号在 `web/panel.js` 的 `INIT_MODEL`/`INIT_ROUTE` | 改完用 `GET /app/setup/plan?sel=minimal` 核对 `tiers` 三个值，并同步 README/FEATURES |
-| **加一个权重** | 在 `installer/models.json` 增一条：`id/file/dest/bytes/sha256/tier/license/officialUrl/urls/mirrors/verified/note` | `bytes` 必须精确；`sha256` 必填（下载后校验）；`dest` 只能是 `diffusion_models`/`text_encoders`/`vae` |
+| **加一个权重** | 在 `installer/models.json` 增一条：`id/file/dest/bytes/sha256/tier/license/officialUrl/urls/mirrors/verified/note`，**v1.3.0 还要写 `requires`**（`["runtime","comfyui","model:<前置 id>"]`，`node:comfyui-anima-3-8B` 已不再是任何权重的必需前置） | `bytes` 必须精确；`sha256` 必填（下载后校验）；`dest` 只能是 `diffusion_models`/`text_encoders`/`vae`；**`requires` 决定"装它时自动带上什么"**，写错会让安装中心把不相干的东西排进队列 |
 | **换/加镜像源** | 改 `server/config.js` 的 `DEFAULTS.download.*`，或直接在设置页改；**先跑镜像测速** | 注意 §5"派生值不落盘"规则；`round5-mirrors.cjs` 可批量验 |
 | **加一个 HTTP 接口** | 在 `server/index.js` 对应分支加；同步 `docs/INTERNAL-CONTRACT.md` §4 与 `docs/FULL-REFERENCE.md` 48 | 面板反代路径是 `/comfy-panel/api/*`，不要往那里塞业务接口 |
 | **加一个前端页面** | `web/pages/x.js` 导出默认组件 + 在 `app-shell.js` 的两张页面映射表注册 | 契约见 `docs/INTERNAL-CONTRACT.md` §1–2（props 只有 `api/put/post/t/state/settings/refresh/toast`） |
 | **改下载行为** | 只动 `download.js`；**不要**在调用方里手搓重试/换源 | 三条规则与阈值都在 `download.*`；改完跑 `round5-partial.cjs` + `round5-mirrors.cjs` |
+| **改安装/队列行为**（v1.3.0 新增条目） | 安装编排在 `server/install-queue.js`（`LANES` / `pump` / `run` 的两阶段 / `cancel` / `retask`），组件与模型目录在 `server/models-catalog.js`（`DEFAULT_MODEL_ID` / `requiresOf`），磁盘真值判定在 `server/install-state.js`，HTTP 面在 `server/index.js` 的 `/app/install/*` 与 `/app/components|models/enqueue` | ① **`comfyui` 必须留在自己的通道里**（红线 18）；② 新加"下载一个文件"的路径**必须把 `opts.onProgress` 传下去**（红线 20，漏了就是"这一行永远 0%、没速度"）；③ `/app/install/queue/clear` 那条精确路由**必须写在前缀分支之前**（红线 19）；④ 改完跑 `_v213-accept.cjs` + `_v213-b6.cjs` + `_v213-b7.cjs` |
+| **改"一键下载"装什么** | 只改 `server/models-catalog.js` 的 `DEFAULT_MODEL_ID`（配套模型由该条目的 `requires` 自动展开，随 `/app/models/library` 的 `defaultModelIds` 下发） | 别在前端硬编码模型名（`pages/install.js` 只读后端字段）；改完跑 `_v213-b5.cjs` |
 | **改提示词** | `assets/templates/anima-system-prompt.txt` | 与发给模型的必须逐字节一致（`llm-test.cjs` 会核） |
 | **改本地模型** | 放到 `models\llm\`，在 LLM 页「添加本机文件」或改 `data/llm/models.json` | 推荐目录 `installer/llm-models.json` **只给链接**，不自动下载 |
 | **改启动器** | `scripts/start.ps1`（UTF-8 BOM + CRLF），改完跑 `normalize-ps1.cjs` | 双击入口 `start.cmd` 是纯 ASCII + CRLF，**不要**往里加中文 |
@@ -414,6 +437,7 @@ cd <验收脚本目录的上一级>
 
 | 轮次 | 主题 |
 |---|---|
+| 12 | **v1.3.0（第十二轮）**：修用户报的**安装阶段恶性 bug** + 新增安装中心与自定义模型。①**可续装**：新增 `server/install-state.js`（`data/install/state.json`），组件与模型的"装没装"一律以**磁盘真值**判定（`comfyui` = `main.py` + `python_embeded\python.exe` 都在）；`runSetup` 只装缺的，`force` 才重做。**关键修复**：旧 `installComfyUI` 无条件 `fs.rmSync(runtime\comfyui)` + 全量解压 —— 而那个目录正是内嵌模式的权重目录，重装会把用户已下好的模型一起删掉；现在重装先把 `models\` 挪到 `runtime\_dl\_comfyui-models-bak\`，成功/失败都合并回来（沙箱 harness 有断言）。②**不再卡死**：任务日志实测"官方源超时→镜像→50–60 KB/s 磨 5 分钟、ETA 两万五千秒仍无中止"；`download.js` 新增 **单来源墙钟上限**（模型 3 h / 组件 6 h）+ "无 content-length 且 30 s 无字节即换源"，组件/模型全部来源失败即**跳过并继续**；另修两处真凶 —— `7z-extra.7z` 被截断到 1.4 MB 却判"下载完成"（导致降级到 **7zr 精简版**解大包），现在归档先做签名校验、坏缓存重下；`7zr.exe` 改用**可执行文件头校验**（拿归档判据去校验它会把好文件删掉，自检时真踩到）。③**组件与模型分离**：两条独立流水线 + 队列里 `kind` 区分。④**持久化下载队列**（`server/install-queue.js` + `data/install/tasks.json`）：暂停/继续/取消（删本地文件）/自动换源（清最快源记忆 + 跳过已失败主机 + 重测）/上下移；进度**关窗口甚至重启后端都在**（重启后 `running` → `paused`）。⑤**逐个安装 + 进度**：新增 **「📦 安装中心」页**（`web/pages/install.js`），模型逐行安装按钮与进度；向导页同样。⑥**前置自动入队**：`installer/models.json` 每条新增显式 `requires`（7 条），缺前置时提示并排队，`addedPrereqs` 去重。⑦**自定义模型**：浏览器直传（原始字节，非 multipart）/ 本机路径导入（硬链接优先）/ 只登记直链；可自定义命名、目标类型、管线与**编码器·VAE**（保存即校验家族，防生成时才报维度/通道错）；同名同文件仍是独立条目；面板新增 `customPairing` 纯函数按声明配对。⑧测速与 `fetchText` 提速（512 KiB / 4 s / 最多 3 路并发；单源 6 s / 3 源）。⑨版本号三处 → `1.3.0`。**第四批修正（同日）**：①**组件彻底合并成两条任务** —— 界面只显示「前置组件」与「ComfyUI 本体」，**完全不出现** 7-Zip / 画师清单 / 许可 / 自定义节点这些名字（`GROUPS` 归组；后端仍逐组件装，只是不暴露）；②**双通道并行下载** —— `lane:"prereq"` 与 `lane:"model"`（默认 3 路）互不阻塞，点一次「一键下载组件 + 模型」后 ComfyUI 与模型同时在下，总速度叠加；ComfyUI 拆成"下载 → 解压"两阶段（`downloadPortableArchive` / `installFromArchive`），下载完把通道让给解压；**模型先下完停在 99% 显示「等待 ComfyUI」**；③**速度可见** —— `/app/install/queue` 新增 `totalSpeedKBs` 与 `runningSpeeds[]`，队列标题栏显示总速度、每行显示自己的速度；④**向导页移除 + 首次启动自动跳转** —— 删 `web/pages/wizard.js` 与 47 个 `wizard.*` 键（侧栏只剩 4 项），`setup` 未完成且从未自动跳转过时自动切到「安装中心」，该页引导横幅一键入队组件 + ComfyUI + 最小档模型。**验收**：`check.js` **19/19**、沙箱后端 harness **38/38**、安装中心组件/首次启动 harness **15/15**、安装中心 UI **23/23**、面板冒烟 **32/32**、截断下载防线 **8/8**。**第五批**：一键按钮改为「组件 + **默认模型**」（只装 `anima-turbo-v1.1` + 它的配套编码器/VAE，由 `models-catalog.js` 的 `DEFAULT_MODEL_ID` 单点定义）；「本地 LLM」全量改名「LLM」（词典零残留）。**第六批（修用户报的两个 bug）**：①「清空已结束任务」无效 = **路由顺序**问题（`/app/install/queue/clear` 被前缀分支抢先匹配 → 404），已把精确匹配提到前缀之前；②ComfyUI 下载被挤占 = **通道划分**问题（`prereq` 与 `comfyui` 共用上限 1 的通道），已拆成 `comfyui`(优先,1) / `prereq`(2) / `model`(2) **三条互不阻塞的通道**，并补了取消/继续的两处状态清理。**验收**：本批新增 `.scratch\_v213-b5.cjs` **10/10**（默认模型集 + LLM 改名）与 `.scratch\_v213-b6.cjs` **10/10**（清空/取消/独立通道）。 |
 | 11 | **v1.2.2（第十一轮）**：①**退出即停**：新增 `POST /app/quit`（停本程序拉起的 ComfyUI → 停 LLM → 关 HTTP → 落盘 → 退出，重复/并发调用只收尾一次），`SIGINT/SIGTERM/SIGBREAK` 走同一套，`process.on('exit')` 加**纯同步**兜底 `killOwnedSync`；托盘退出改"先礼后兵"（先 `POST /app/quit`，6 s 超时 + 最多等 8 s，失败才回退 `taskkill /T /F`，两条路径最后都按归属记录再清一次）。②**只清自己的**：新增进程归属记录 `data/run/comfy-owner-<pid>.json`（launch 成功即写、子进程退出即删）+ 五条谓词；启动时 `cleanupOrphans()` 只清自己写过的记录；删除旧 `stop()` 里"按 `comfy.port` 找监听者"的兜底（它会误杀用户自己启动的实例），非本程序拉起的实例改为回报 `owner=foreign` 并跳过。③**孤儿真因（实测纠正）**：孤儿不是 detached 逃逸 —— 父进程还活着时 `taskkill /T` 能连 detached 子进程一起收；真因是**父链断裂**（`scripts/start.ps1` 的 `$proc.Kill()` 是单进程杀，控制台被强杀时中间那层 node 先死），外加旧 `listen()` 在 EADDRINUSE 自增时**重复注册就绪回调**导致 `autoStart` 一次拉起 3 个 ComfyUI 而内存只记住最后一个 pid（本轮一并修掉）。④**端口不漂移**：`MAX_PORT_BUMP=2`、每次 WARN、超限 `log.error` + `DCP_PORT` 建议 + `exit 1`；**取消**端口回写，实际端口只存内存并由 `/app/state` 顶层 `port` 自证。⑤**前端不刷屏**：顶栏「服务地址」徽标（取值链 顶层 `port` → `listen.port` 兜底 → 不渲染；非法值一律当缺失）；断连只在"连通→断连"跳变画**一条**可操作 banner，恢复即消失，首帧连不上改为 5 s 轻探自愈；同文案 error toast 30 s 节流；`__DCP_SAVE_ARTISTS__` 单飞+按 key 合并、只在真变更时广播（空闲自我回声实测从约 166 次/秒降到 0~1 次/22 s）。⑥版本号三处 → `v1.2.2`。**独立复核**：`check.js` pass=19 fail=0、后端 harness 105/105、前端无头 Edge 45/45（`docs/ROUND11-VERIFY.md`）。 |
 | 10 | **v1.2.1（第十轮）**：①**切页保留状态** —— 导航改成四个常驻标签页，工作台切走时只隐藏不卸载（修掉"切到设置就失去提示词与 LLM 历史"；根因是页面 key 掺了 `renderKey`，按需加载完成时把刚挂载的页面整体重建），后台标签页跳过轮询 + 幂等 GET 瞬时失败重试；②**画师分组补齐** —— 收藏/黑名单 chip 与**生图面板内**（下拉行 / 已选 chip / 分组随机块）都能加组，分组卡片可展开成员、移出成员、重命名；按 key 传/按 key 写修掉"面板挂载清空分组"，新增 `POST /app/artists/groups/replace`；③**外接 API 思考过程可见 + 复制可靠** —— 新增 `reasoning` 帧与「🧠 思考过程」块（与正文分离、可折叠可单独复制），复制按钮不再依赖解析成功，修掉 `setLast` 打在 system 帧上导致助手气泡恒空；④**历史永久保留** —— `新建会话` 不再删会话、新增 `GET /app/llm/sessions` + `DELETE /app/llm/session/:id` + `lastSessionId` 自动接回，`keepMessages` 上限 200 → 2000；⑤版本号 → `v1.2.1`（`server/config.js` 的 `VERSION` 与 `package.json`）。 |
 | 1 | 从早期插件形态派生出独立项目：零依赖后端、静态前端、可拷贝迁移、向导、F1–F5 功能、四份文档、核心版打包 |

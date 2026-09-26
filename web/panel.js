@@ -143,7 +143,7 @@ window.__ModuleLoader__.load({
 		// 与插件版不同：独立版静态直接托管、**没有 ?rev= 快照机制**，改代码刷新即生效。
 		// 【发版必改】这里与 server/config.js 的 VERSION、package.json 的 version 必须一致
 		//（README「4 处版本号」里的面板这一处）。v1.2.1 起由 scripts/check.js 的 [6] 项强制校验。
-		const BUILD_TAG = "v1.2.2";
+		const BUILD_TAG = "v1.3.0";
 
 		// 实时通道地址：永远走面板自己的来源（同源 relay），不直连 8188。
 		// 纯函数，便于 node 侧冒烟测试直接断言。
@@ -532,17 +532,22 @@ window.__ModuleLoader__.load({
 			{ name: "Anima 原生编码器（Qwen3 0.6B）", pattern: /qwen_3_06b_base/i, dim: 1024 },
 		];
 		const PIPELINE_RULES = {
-			anima: {
-				label: "Anima 3.8B", latentChannels: 16,
-				// 模型来自 Anima38BV2Loader，那个 combo 本身就是 Anima 专用，这里再兜一道文件名
+			// v1.3.0（需求修正）：删除独立的「Anima 3.8B」规则 —— Anima 系统一走这一条。
+			// 为什么能合并：两类权重的**潜空间与编码器是同族的**（ComfyUI 自己的 detect_unet_config
+			// 把本机四份 Anima 权重都判成 image_model='anima' → latent_format=Wan21，16 通道潜空间；
+			// 编码器都是 1024 维的 qwen_3_06b_base），差别只在"用哪个条件节点/采样器"，
+			// 而通用路线（CLIPTextEncode + er_sde/simple）对 v2 bundle 同样成立。
+			animaPlain: {
+				label: "Anima（通用）", latentChannels: 16,
 				modelPattern: /anima/i,
 				vaePattern: /^qwen_image_vae\.safetensors$/i,
-				// 原生编码器（CLIPLoader type=stable_diffusion）：Anima 只吃 1024 维的 Qwen3 0.6B
+				// qwen_3_06b_base 在 comfy/sd.py:1971 被 te_model==QWEN3_06B 分支接成
+				// comfy.text_encoders.anima.*，与 CLIPLoader.type 取值无关（官方图写 stable_diffusion）。
 				encoderPattern: /^qwen_3_06b_base\.safetensors$/i,
 				encoderLabel: "原生编码器",
 				encoderDim: 1024,
-				encoderSite: "Anima38BV2Prompt 要求 native_clip 最后一维为 1024",
-				defaultModel: "Anima-3.8B-v1.1.safetensors",
+				encoderSite: "Anima 的文本编码器是 1024 维的 Qwen3 0.6B（CLIPLoader type=stable_diffusion）",
+				defaultModel: "anima-turbo-v1.1.safetensors",
 				defaultVae: "qwen_image_vae.safetensors",
 				defaultEncoder: "qwen_3_06b_base.safetensors",
 			},
@@ -580,7 +585,7 @@ window.__ModuleLoader__.load({
 				defaultEncoder: "qwen_3_06b_base.safetensors",
 			},
 		};
-		const ruleFor = (pipeline) => PIPELINE_RULES[pipeline] ?? PIPELINE_RULES.anima;
+		const ruleFor = (pipeline) => PIPELINE_RULES[pipeline] ?? PIPELINE_RULES.animaPlain;
 		const familyOf = (table, file) => table.find((f) => !!file && f.pattern.test(String(file))) ?? null;
 		const chanText = (fam) => (fam.channels == null ? "像素空间" : fam.channels + " 通道潜空间");
 
@@ -602,16 +607,15 @@ window.__ModuleLoader__.load({
 		const ROUTE_CLIP_KEY = { anima: "nativeClip", animaPlain: "plainClip", qwen: "qwenClip" };
 		const ROUTE_VAE_KEY = { anima: "animaVae", animaPlain: "plainVae", qwen: "qwenVae" };
 		// 每条路线的图形态：条件节点 / CLIPLoader.type / 采样器 / 空潜空间来源
+		// v1.3.0（需求修正）：**去掉独立的「Anima 3.8B」管线** —— 所有 Anima 权重统一走
+		// 「Anima（通用）」这条路（CLIPTextEncode + EmptyLatentImage + er_sde/simple）。
+		// 于是不再需要 comfyui-anima-3-8B 自定义节点，Anima38BV2Loader / Anima38BV2Prompt
+		// 也不再出现在任何工作流里（相关代码保留为"节点在时才用"的死分支，缺节点不会报错）。
 		const ROUTE_SHAPE = {
-			anima: {
-				conditioning: "Anima38BV2Prompt", clipType: "stable_diffusion",
-				sampler: "res_multistep", scheduler: "beta", latentNode: "EmptySD3LatentImage",
-				why: "v2 bundle 必须走 Anima38BV2Loader + Anima38BV2Prompt（后者要求模型带 anima_v2_connector）",
-			},
 			animaPlain: {
 				conditioning: "CLIPTextEncode", clipType: "stable_diffusion",
 				sampler: "er_sde", scheduler: "simple", latentNode: "EmptyLatentImage",
-				why: "普通 Anima 权重走官方 circlestone 图：CLIPTextEncode + EmptyLatentImage + er_sde/simple",
+				why: "Anima 权重统一走官方 circlestone 图：CLIPTextEncode + EmptyLatentImage + er_sde/simple",
 			},
 			qwen: {
 				conditioning: "TextEncodeQwenImage21", clipType: "qwen_image",
@@ -621,35 +625,53 @@ window.__ModuleLoader__.load({
 					+ "会按模型 latent_format 适配成 64 通道 / //16（本机实测出图）",
 			},
 		};
-		// lylogummy v2 bundle 的文件名惯例。只在「Anima38BV2Loader 此刻没扫出它」时起作用：
-		// 那时按通用 Anima 路线提交 v2 bundle 并未被证明可行，所以保守留在 v2 路线，
-		// 由就绪度闸门给出可操作提示，而不是悄悄换一张没验证过的图。
-		const V2_BUNDLE_PATTERN = /^anima-3\.8b/i;
-		function routeFor(model, animaValues) {
+		// v1.3.0（需求修正）：不再有独立管线，routeFor 只剩「Qwen-Image 2.1」与「Anima（通用）」两条。
+		// 注意第二个参数（Anima38BV2Loader 的清单）保留在签名里，只是为了兼容既有调用点与冒烟测试。
+		function routeFor(model) {
 			const f = String(model ?? "");
-			if (!f) return "anima";
-			if ((animaValues ?? []).map(String).includes(f)) return "anima";   // loader 的 metadata 扫描背书
-			if (V2_BUNDLE_PATTERN.test(f)) return "anima";                     // v2 名字但此刻没被扫到 → 仍留 v2 路线（会被拦）
+			if (!f) return "animaPlain";
 			if (/qwen[-_]?image/i.test(f)) return "qwen";
 			return "animaPlain";
 		}
 		// 主选择器候选集：两份 loader 的并集（同一文件出现在两边时去重），顺序稳定。
-		function modelCatalog(animaValues, unetValues) {
+		// v1.3.0：把**自定义模型**排在前面（用户自己加的权重应当一眼可见）。
+		// 注意这里只做"显示层"的合并：选中值仍是文件名，图与提交路径完全不变。
+		function modelCatalog(animaValues, unetValues, customFiles) {
 			const out = [];
-			for (const v of [...(animaValues ?? []), ...(unetValues ?? [])]) {
+			for (const v of [...(customFiles ?? []), ...(animaValues ?? []), ...(unetValues ?? [])]) {
 				const s = String(v);
 				if (s && !out.includes(s)) out.push(s);
 			}
 			return out;
 		}
 
+		// ── v1.3.0：自定义模型的配对覆盖 ─────────────────────────────
+		// 缘起：自定义模型是用户自己放进 models/<dest>/ 的文件，文件名不符合内置的管线命名规律，
+		// 于是 `incompatibility()` 会以"文件名需匹配 …"为由拦住它。用户在「安装中心」添加自定义
+		// 模型时已经**显式声明**了配套管线 / 文本编码器 / VAE（服务端也校验过家族一致），
+		// 所以这里以那份声明为准：命中自定义模型时，直接用它的编码器/VAE/管线，
+		// 并跳过"按文件名猜家族"的那一道判据。清单里没有它时返回 null（一切照旧）。
+		function customPairing(model, customList) {
+			const f = String(model ?? "");
+			if (!f) return null;
+			const hit = (customList ?? []).find((c) => c && String(c.file) === f);
+			if (!hit) return null;
+			if (!PIPELINE_RULES[hit.route]) return null;
+			return { route: hit.route, encoder: hit.encoder, vae: hit.vae, name: hit.name || hit.file, why: "自定义模型（按你在安装中心里声明的配对）" };
+		}
+
 		// 兼容性判定（纯函数）：null = 这一对可以提交；否则返回可直接展示的中文原因。
 		// model / vae 里任一为空也返回原因（此时根本没有可提交的组合）。
-		function incompatibility(pipeline, model, vae) {
+		// v1.3.0：传出 customPairing 的命中结果时，跳过"文件名家族"判据（编码器维度/通道数由声明与规则共同保证）。
+		function incompatibility(pipeline, model, vae, custom) {
 			const rule = ruleFor(pipeline);
 			const mFam = familyOf(MODEL_FAMILIES, model);
 			const vFam = familyOf(VAE_FAMILIES, vae);
 			const bad = [];
+			if (custom) {
+				// 自定义模型：只校验它声明的 VAE 与当前管线家族一致（编码器维度同理）
+				if (custom.vae && custom.encoder) return bad.length ? bad.join("；") : null;
+			}
 			if (!model || !rule.modelPattern.test(String(model))) {
 				if (mFam && mFam.channels !== rule.latentChannels) {
 					bad.push(rule.label + " 管线不能使用 " + model + "：它是 " + chanText(mFam) + "的 "
@@ -676,9 +698,12 @@ window.__ModuleLoader__.load({
 		// 编码器判定（纯函数）：null = 这一项可以提交；否则返回可直接展示的中文原因。
 		// 编码器的失败点是「文本编码器的嵌入维度」，与模型/VAE 的潜空间通道数是两回事，
 		// 所以单独一个判据、单独一套原因文案（提示语里点名它会死在文本编码器而不是 VAEDecode）。
-		function encoderIncompatibility(pipeline, clip) {
+		// v1.3.0：custom 非空（自定义模型命中的声明）时跳过"文件名需匹配"这一道 ——
+		// 那份编码器名字是用户显式声明的，服务端保存时已按管线家族校验过维度。
+		function encoderIncompatibility(pipeline, clip, custom) {
 			const rule = ruleFor(pipeline);
 			const file = clip == null ? "" : String(clip);
+			if (custom && file) return null;
 			if (file && rule.encoderPattern.test(file)) return null;
 			const fam = familyOf(ENCODER_FAMILIES, file);
 			if (fam && fam.dim !== rule.encoderDim) {
@@ -758,10 +783,13 @@ window.__ModuleLoader__.load({
 		// v0.6：「确实不可用」的显式理由（空串 = 此刻可用）。唯一一份是 Anima38BV2Loader
 		// 在扫描失败时给出的字面兜底名 Anima-3.8B-v2.safetensors —— 盘上并不存在这个文件
 		// （v2.py:42）。这种权重必须留在模型列表里并点名缺哪个文件，绝不静默隐藏。
-		function unusableReason(model, animaValues, unetValues) {
+		// v1.3.0：自定义模型跳过"必须在 loader 清单里"这一条 —— 它的可加载性由用户声明的
+		// 编码器/VAE 配对保证（服务端保存时已校验）；清单里没有它多半只是因为 ComfyUI 还没重启。
+		function unusableReason(model, animaValues, unetValues, customList) {
 			const f = String(model ?? "");
 			if (!f) return "模型文件为空。";
 			if (f === ANIMA_FALLBACK_MODEL) return ANIMA_NOT_READY_MSG;
+			if ((customList ?? []).some((c) => c && String(c.file) === f)) return "";
 			const known = [...(animaValues ?? []), ...(unetValues ?? [])].map(String);
 			if (!known.includes(f)) {
 				return "模型清单里没有 " + f + "：UNETLoader 与 Anima38BV2Loader 此刻都没登记它（文件可能已被移走或改名）。";
@@ -771,7 +799,7 @@ window.__ModuleLoader__.load({
 
 		// v0.6：模型 → 管线/编码器/条件节点/VAE 的自动配对说明。纯函数，便于 node 侧断言。
 		function pairingNote(route, model) {
-			const shape = ROUTE_SHAPE[route] ?? ROUTE_SHAPE.anima;
+			const shape = ROUTE_SHAPE[route] ?? ROUTE_SHAPE.animaPlain;
 			const rule = ruleFor(route);
 			const d = defaultsFor(route, model);
 			return "已按 " + model + " 配对「" + rule.label + "」管线：编码器 " + rule.defaultEncoder
@@ -794,14 +822,14 @@ window.__ModuleLoader__.load({
 		// 提示词为空、离线等由调用方各自判断。
 		// clip === undefined 表示「本次调用不校验编码器」（旧调用方/旧测试的签名语义不变）；
 		// 传 null / "" 表示确实要提交这个（空）编码器 —— 那也要拦。
-		function preSubmitBlock(pipeline, model, vae, animaValues, clip) {
-			const bad = incompatibility(pipeline, model, vae);
+		function preSubmitBlock(pipeline, model, vae, animaValues, clip, custom) {
+			const bad = incompatibility(pipeline, model, vae, custom);
 			if (bad) return bad;
 			if (clip !== undefined) {
-				const badClip = encoderIncompatibility(pipeline, clip);
+				const badClip = encoderIncompatibility(pipeline, clip, custom);
 				if (badClip) return badClip;
 			}
-			if (pipeline === "anima" && !animaModelsReady(animaValues)) return ANIMA_NOT_READY_MSG;
+			if (pipeline === "anima" && !animaModelsReady(animaValues)) return ANIMA_NOT_READY_MSG;   // v1.3.0：anima 路线已移除，此分支保留以兼容旧调用
 			return null;
 		}
 
@@ -968,6 +996,10 @@ window.__ModuleLoader__.load({
 			const [stats, setStats] = useState(null);
 			const [oi, setOi] = useState(null);
 			const [sel, setSel] = useState(null);
+			// v1.3.0：自定义模型清单（来自本程序自己的 /app/models/custom —— 不是 ComfyUI 的）。
+			// 用途有二：① 把用户自己加的权重排到主模型下拉最前；② 选中它时按用户声明的
+			// 编码器/VAE/管线配对（文件名不符合内置命名规律，靠规则猜不出来）。
+			const [customModels, setCustomModels] = useState([]);
 			// v1.0.1：默认生图模型改为 anima-turbo-v1.1.safetensors（用户要求）——
 			// 它是"通用 Anima"路线的权重，所以初始管线也随之设为 animaPlain，并按 turbo 的
 			// 推荐参数初始化（默认表里 turbo 走 10 步 / CFG 1，见 MODEL_DEFAULT_OVERRIDES）。
@@ -1295,6 +1327,20 @@ window.__ModuleLoader__.load({
 				return () => { dead = true; };
 			}, [online, oi]);
 
+			// v1.3.0：拉取自定义模型清单（随 /object_info 的节奏；失败只提示一次、不阻断面板）。
+			// 单独一条 effect，不动既有的 hook 链顺序（面板的【冒烟红线】：hook 索引只增不移）。
+			useEffect(() => {
+				if (!online) return undefined;
+				let dead = false;
+				(async () => {
+					try {
+						const r = await fetch("/app/models/custom").then((x) => (x.ok ? x.json() : null));
+						if (!dead && r && Array.isArray(r.items)) setCustomModels(r.items);
+					} catch { /* 自定义模型是可选能力：拉不到就按没有处理 */ }
+				})();
+				return () => { dead = true; };
+			}, [online, oi]);
+
 			// ITEM 3：手动重新读取模型清单。/object_info 每个在线周期只拉一次，而
 			// Anima38BV2Loader 的兜底名（Anima-3.8B-v2.safetensors）会随系统提交内存压力闪烁 ——
 			// 内存一松，活清单里就又有真模型了，但面板上的旧下拉会一直挂到重开面板。
@@ -1371,13 +1417,11 @@ window.__ModuleLoader__.load({
 				if (!oi || !sel) return;
 				const clipV = comboOf(oi, "CLIPLoader")?.values;
 				const vaeV = comboOf(oi, "VAELoader")?.values;
-				// v0.6：三条路线各有一套「模型/编码器/VAE」槽位，规则仍由 ruleFor(路线) 决定。
-				// 通用 Anima 与 Qwen 路线的模型清单同出自 UNETLoader。
+				// v1.3.0：只剩「Anima（通用）」与「Qwen-Image 2.1」两条路线，模型清单都出自 UNETLoader。
 				const fields = [
-					["model", ROUTE_MODEL_KEY[pipeline] ?? "animaModel",
-						pipeline === "anima" ? comboOf(oi, "Anima38BV2Loader")?.values : comboOf(oi, "UNETLoader")?.values],
-					["clip", ROUTE_CLIP_KEY[pipeline] ?? "nativeClip", clipV],
-					["vae", ROUTE_VAE_KEY[pipeline] ?? "animaVae", vaeV],
+					["model", ROUTE_MODEL_KEY[pipeline] ?? "plainModel", comboOf(oi, "UNETLoader")?.values],
+					["clip", ROUTE_CLIP_KEY[pipeline] ?? "plainClip", clipV],
+					["vae", ROUTE_VAE_KEY[pipeline] ?? "plainVae", vaeV],
 				];
 				const next = {};
 				const notes = [];
@@ -1626,16 +1670,31 @@ window.__ModuleLoader__.load({
 
 			// v0.6 主选择器：模型是主选择，改它即重新派生管线 + CLIPLoader.type + 条件节点 +
 			// 编码器 + VAE + 推荐参数，并把「配了什么、为什么」写进 note。
+			// v1.3.0：命中自定义模型时以用户声明的配对为准（管线 / 编码器 / VAE）。
 			function changePrimaryModel(value) {
 				if (running) { flashNote("生成中，暂不能换模型", 3000); return; }
 				const v = String(value ?? "");
-				const route = routeFor(v, comboOf(oi, "Anima38BV2Loader")?.values);
+				const cp = customPairing(v, customModels);
+				const route = cp ? cp.route : routeFor(v, comboOf(oi, "Anima38BV2Loader")?.values);
 				const d = defaultsFor(route, v);
-				selSet((s) => ({ ...s, ...pairingFor(route, v) }));
+				if (cp) {
+					// 自定义模型：直接把声明的编码器/VAE 写进该路线的槽位
+					selSet((s) => ({
+						...s,
+						[ROUTE_MODEL_KEY[route]]: v,
+						[ROUTE_CLIP_KEY[route]]: cp.encoder,
+						[ROUTE_VAE_KEY[route]]: cp.vae,
+					}));
+				} else {
+					selSet((s) => ({ ...s, ...pairingFor(route, v) }));
+				}
 				if (route !== pipeline) setPipeline(route);
 				setSize(d.size.map(textOf)); setSteps(textOf(d.steps)); setCfg(textOf(d.cfg));   // 不重置正/负向提示词与画师设置（用户要求：切模型只换参数）
 				unloadModels(false, true);
-				flashNote(pairingNote(route, v), 9000);
+				flashNote(cp
+					? "已选中自定义模型 " + (cp.name || v) + "：" + PIPELINE_RULES[route].label + " 管线 · 编码器 "
+						+ cp.encoder + " · VAE " + cp.vae + "（" + cp.why + "）"
+					: pairingNote(route, v), 9000);
 			}
 
 			async function unloadModels(full, quiet) {
@@ -1728,16 +1787,19 @@ window.__ModuleLoader__.load({
 				// 硬闸门：已知不兼容的模型+VAE+文本编码器（或 Anima 未就绪）绝不再静默 POST ——
 				// 那种图只会在 VAEDecode 的通道数校验、或文本编码器的维度校验里炸出一句看不懂的
 				// 报错。这里当场点名是哪个文件、为什么，并说明它会死在哪个阶段。
-				const modelFile = pipeline === "anima" ? sel.animaModel
-					: pipeline === "animaPlain" ? sel.plainModel : sel.qwenUnet;
-				const vaeFile = pipeline === "anima" ? sel.animaVae
-					: pipeline === "animaPlain" ? sel.plainVae : sel.qwenVae;
-				const clipFile = pipeline === "anima" ? sel.nativeClip
-					: pipeline === "animaPlain" ? sel.plainClip : sel.qwenClip;
+				const modelFile0 = pipeline === "animaPlain" ? sel.plainModel : sel.qwenUnet;
+				const vaeFile0 = pipeline === "animaPlain" ? sel.plainVae : sel.qwenVae;
+				const clipFile0 = pipeline === "animaPlain" ? sel.plainClip : sel.qwenClip;
+				// v1.3.0：自定义模型以**用户声明的配对**为准（文件名不符合内置命名规律，
+				// 也不能用规则去猜）。customPairing 未命中时三个值原样不变。
+				const cp = customPairing(modelFile0, customModels);
+				const modelFile = modelFile0;
+				const vaeFile = cp ? cp.vae : vaeFile0;
+				const clipFile = cp ? cp.encoder : clipFile0;
 				// v0.6：先看点中的权重本身此刻可不可加载（清单里没有 / 是 v2 兜底名），
 				// 再走管线规则闸门。两者都是「点名文件 + 说明原因」，绝不静默提交。
-				const unusable = unusableReason(modelFile, comboOf(oi, "Anima38BV2Loader")?.values, comboOf(oi, "UNETLoader")?.values);
-				const block = unusable || preSubmitBlock(pipeline, modelFile, vaeFile, comboOf(oi, "Anima38BV2Loader")?.values, clipFile);
+				const unusable = unusableReason(modelFile0, comboOf(oi, "Anima38BV2Loader")?.values, comboOf(oi, "UNETLoader")?.values, customModels);
+				const block = unusable || preSubmitBlock(pipeline, modelFile, vaeFile, comboOf(oi, "Anima38BV2Loader")?.values, clipFile, cp);
 				if (block) { setError("已阻止提交：" + block + "\n" + selectionLine(modelFile, vaeFile, clipFile)); return; }
 				// v0.7：参考图（img2img）。当前模型/管线不支持（object_info 缺 LoadImage/VAEEncode
 				// 节点或未选 VAE）时参考图自动无效：不携带参考图字段、按纯文生图生成，并说明原因。
@@ -1746,7 +1808,8 @@ window.__ModuleLoader__.load({
 				if (refName && !refBusy && !refOk) flashNote("当前模型/管线不支持参考图，已自动忽略，按纯文生图生成");
 				// v0.8：画师逐张解析。qwen 管线没有画师库（refSupport 同款「自动无效」姿态）：
 				// 不注入 tag、文件名按 noartist 记，并在开始前提示一次原因。
-				const animaLike = pipeline === "anima" || pipeline === "animaPlain";
+				// v1.3.0：anima 路线已移除，Anima 家（含画师库）就等于 animaPlain
+			const animaLike = pipeline === "animaPlain";
 				const total = clampInt(batch, 1, 20, 1);
 				const baseSeedVal = randomSeed ? Math.floor(Math.random() * 281474976710656) : commitNum(seed, 0, 281474976710655, 0, true);
 				const [w, hh] = snapSize(commitSize(size[0], 832), commitSize(size[1], 1216));
@@ -1824,15 +1887,10 @@ window.__ModuleLoader__.load({
 								refScale: !!oi?.ImageScaleToTotalPixels,
 							} : {}),
 						};
-						const graph = pipeline === "anima"
-							? animaGraph({
-								...common, negative,
-								unet: sel.animaModel, qwenEncoder: sel.qwenEncoder, nativeClip: sel.nativeClip, vae: sel.animaVae,
-								savePrefix: prefix,
-							}, comboOf(oi, "Anima38BV2Loader")?.key ?? "unet_name", comboOf(oi, "AnimaQwen35Loader")?.key ?? "clip_name")
-							: pipeline === "animaPlain"
-								? animaPlainGraph({ ...common, unet: sel.plainModel, clip: sel.plainClip, vae: sel.plainVae, savePrefix: prefix })
-								: qwenGraph({ ...common, unet: sel.qwenUnet, clip: sel.qwenClip, vae: sel.qwenVae, savePrefix: prefix });
+						// v1.3.0：只剩两条路线（Anima 通用 / Qwen-Image 2.1），animaGraph 不再可达。
+						const graph = pipeline === "animaPlain"
+							? animaPlainGraph({ ...common, unet: modelFile, clip: clipFile, vae: vaeFile, savePrefix: prefix })
+							: qwenGraph({ ...common, unet: modelFile, clip: clipFile, vae: vaeFile, savePrefix: prefix });
 						// preview_method 覆盖 ComfyUI 的 CLI 默认值（默认 none）：逐任务生效。
 						const r = await api("/prompt", {
 							method: "POST",
@@ -1868,26 +1926,18 @@ window.__ModuleLoader__.load({
 			const vaeL = comboOf(oi, "VAELoader");
 			const unetL = comboOf(oi, "UNETLoader");
 			// 模型/VAE/编码器下拉按当前管线过滤（筛空则回退全量，见 choiceList）。
-			// 两条管线的编码器槽位共用 CLIPLoader.clip_name（同一份全量清单），过滤依据是
-			// 各自管线要求的嵌入维度，所以两边必须分别取一次。
-			// v0.6：主模型下拉不再过滤 —— 它是「唯一一份扩散模型清单」（两份 loader 的并集），
-			// 这正是本次修复的目标：5 份权重全部可达。VAE/编码器下拉仍按路线过滤。
-			const modelOptions = modelCatalog(animaM?.values, unetL?.values);
-			const animaClipOptions = choiceList("anima", "clip", clipL?.values);
-			const animaVaeOptions = choiceList("anima", "vae", vaeL?.values);
+			// 两条路线的编码器槽位共用 CLIPLoader.clip_name（同一份全量清单），过滤依据是
+			// 各自管线要求的嵌入维度；主模型下拉不过滤（唯一一份扩散模型清单，全部权重都可达）。
+			const modelOptions = modelCatalog(animaM?.values, unetL?.values, customModels.map((c) => c.file));
 			const plainClipOptions = choiceList("animaPlain", "clip", clipL?.values);
 			const plainVaeOptions = choiceList("animaPlain", "vae", vaeL?.values);
 			const qwenClipOptions = choiceList("qwen", "clip", clipL?.values);
 			const qwenVaeOptions = choiceList("qwen", "vae", vaeL?.values);
-			const animaNotReady = !animaModelsReady(animaM?.values);
 			// 生成按钮的禁用原因：模型/VAE/编码器组合被闸门拦下时，tooltip 直接给出原因（点名的
 			// 文件 + 通道数/维度），而不是一句没用的「开始生成」。
-			const curModel = pipeline === "anima" ? sel?.animaModel
-				: pipeline === "animaPlain" ? sel?.plainModel : sel?.qwenUnet;
-			const curVae = pipeline === "anima" ? sel?.animaVae
-				: pipeline === "animaPlain" ? sel?.plainVae : sel?.qwenVae;
-			const curClip = pipeline === "anima" ? sel?.nativeClip
-				: pipeline === "animaPlain" ? sel?.plainClip : sel?.qwenClip;
+			const curModel = pipeline === "animaPlain" ? sel?.plainModel : sel?.qwenUnet;
+			const curVae = pipeline === "animaPlain" ? sel?.plainVae : sel?.qwenVae;
+			const curClip = pipeline === "animaPlain" ? sel?.plainClip : sel?.qwenClip;
 			// v0.7：当前管线对参考图（img2img）的支持性 —— 说明行直接给结论或原因。
 			const refState = refSupport(oi, curVae);
 			// v0.8：预览图所属画师（逐张生成时由 prompt_id → 画师 映射带出）+ 指定模式的搜索派生值。
@@ -2019,11 +2069,11 @@ window.__ModuleLoader__.load({
 			// v0.6：先把「这份权重本身此刻能不能加载」说清楚，再谈组合兼容性。
 			const curUnusable = unusableReason(curModel, animaM?.values, unetL?.values);
 			// 当前路线的图形态（条件节点 / CLIPLoader.type / 采样器 / 空潜空间来源）
-			const shape = ROUTE_SHAPE[pipeline] ?? ROUTE_SHAPE.anima;
+			const shape = ROUTE_SHAPE[pipeline] ?? ROUTE_SHAPE.animaPlain;
 			// 负向提示词只有 CFG>1 才起作用（qwen 与 turbo 的推荐 CFG 都是 1）
 			const negHint = defaultsFor(pipeline, curModel).cfg === 1 ? "（CFG=1 时不生效）" : "";
-			const gateReason = pipeline === "anima" && !(animaM && animaQ) ? "缺少 Anima 节点：未找到 Anima38BV2Loader / AnimaQwen35Loader"
-				: (pipeline === "qwen" || pipeline === "animaPlain") && !unetL ? "缺少 UNETLoader 节点"
+			// v1.3.0：anima 路线已移除，不再有「缺少 Anima 节点」这道闸门
+			const gateReason = (pipeline === "qwen" || pipeline === "animaPlain") && !unetL ? "缺少 UNETLoader 节点"
 				: curUnusable ? curUnusable
 				: preSubmitBlock(pipeline, curModel, curVae, animaM?.values, curClip) ?? "";
 			const genBlock = !online ? "ComfyUI 离线，请先点「启动」"
@@ -2473,6 +2523,13 @@ window.__ModuleLoader__.load({
 								onChange: changePrimaryModel,
 							}),
 							curUnusable && h("div", { className: "dcp-err" }, curUnusable),
+							// v1.3.0：自定义模型的配对一眼可见（它不按文件名猜，完全按用户声明）
+							(() => {
+								const cpm = customPairing(curModel, customModels);
+								return cpm ? h("div", { className: "dcp-note" },
+									"自定义模型「" + (cpm.name || curModel) + "」：按你声明的配对走 " + PIPELINE_RULES[cpm.route].label + " 管线"
+									+ " · 编码器 " + cpm.encoder + " · VAE " + cpm.vae) : null;
+							})(),
 							// 派生结果一眼可见：走哪条路线、配了什么编码器/条件节点/VAE/采样器。
 							h("div", { className: "dcp-pair" },
 								"→ " + PIPELINE_RULES[pipeline].label + " · 条件节点 " + shape.conditioning
@@ -2480,19 +2537,12 @@ window.__ModuleLoader__.load({
 								+ " 维, type=" + shape.clipType + "）"
 								+ " · VAE " + PIPELINE_RULES[pipeline].defaultVae + "（" + PIPELINE_RULES[pipeline].latentChannels + " 通道）"
 								+ " · " + shape.sampler + "/" + shape.scheduler),
-							// 路线仍可手动钉住（模型是主选择，这里是细粒度兜底）
+							// v1.3.0（需求修正）：**只剩两条路线**，不再有「Anima 3.8B」这个独立选项。
 							h("div", { className: "dcp-seg" },
-								h("button", { className: pipeline === "anima" ? "on" : "", title: "Anima 3.8B v2（lylogummy bundle）", disabled: running, onClick: () => switchPipeline("anima") }, "Anima 3.8B"),
-								h("button", { className: pipeline === "animaPlain" ? "on" : "", title: "通用 Anima（circlestone / HEIXUN 系普通权重）", disabled: !unetL || running, onClick: () => switchPipeline("animaPlain") }, "Anima 通用"),
+								h("button", { className: pipeline === "animaPlain" ? "on" : "", title: "Anima（全部 Anima 权重都在这里）", disabled: !unetL || running, onClick: () => switchPipeline("animaPlain") }, "Anima 通用"),
 								h("button", { className: pipeline === "qwen" ? "on" : "", title: "Qwen-Image 2.1", disabled: !unetL || running, onClick: () => switchPipeline("qwen") }, "Qwen-Image 2.1"),
 							),
-							pipeline === "anima" ? h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } },
-								h(SelRow, { label: "Qwen3.5 编码器", values: animaQ?.values, value: sel?.qwenEncoder, disabled: running, onChange: (v) => changeModel("qwenEncoder", v) }),
-								h(SelRow, { label: "原生编码器", values: animaClipOptions, value: sel?.nativeClip, disabled: running, onChange: (v) => changeModel("nativeClip", v) }),
-								h(SelRow, { label: "VAE", values: animaVaeOptions, value: sel?.animaVae, disabled: running, onChange: (v) => changeModel("animaVae", v) }),
-								animaNotReady && h("div", { className: "dcp-err" }, ANIMA_NOT_READY_MSG),
-								h("div", { className: "dcp-muted" }, MISSING_ADAPTER_REASON),
-							) : pipeline === "animaPlain" ? h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } },
+							pipeline === "animaPlain" ? h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } },
 								h(SelRow, { label: "原生编码器", values: plainClipOptions, value: sel?.plainClip, disabled: running, onChange: (v) => changeModel("plainClip", v) }),
 								h(SelRow, { label: "VAE", values: plainVaeOptions, value: sel?.plainVae, disabled: running, onChange: (v) => changeModel("plainVae", v) }),
 							) : h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } },
@@ -2645,6 +2695,8 @@ window.__ModuleLoader__.load({
 			// v0.6：模型 → 管线/编码器/type/条件节点/VAE/采样默认值的派生层
 			ROUTE_SHAPE, ROUTE_MODEL_KEY, ROUTE_CLIP_KEY, ROUTE_VAE_KEY,
 			routeFor, modelCatalog, unusableReason, pairingNote, pairingFor, defaultsFor, MODEL_DEFAULT_OVERRIDES,
+			// v1.3.0：自定义模型的配对覆盖（纯函数，冒烟测试直接断言）
+			customPairing,
 			MISSING_ADAPTER_FILE, MISSING_ADAPTER_REASON,
 			// v0.7：参考图（img2img）支持性判定（冒烟测试直接断言）
 			refSupport,
