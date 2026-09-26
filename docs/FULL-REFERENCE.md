@@ -1,4 +1,4 @@
-# comfy-panel-standalone 完整技术参考（v1.1.0）
+# comfy-panel-standalone 完整技术参考（v1.2.0）
 
 > **本文档面向谁**：接手本项目的维护者（可能在没有任何上下文的情况下冷启动）。
 > **一句话作用**：把「这个项目由哪些文件组成、每个文件负责什么、数据落在哪、为什么这么设计」讲清楚，
@@ -95,7 +95,7 @@
 | `server/util/log.js` | `logs/server.log` 追加写 + 5 MB 滚动 + 内存环（500 行） | ✅ | `DCP_QUIET=1` 可静音控制台 |
 | `server/util/zip.js` | 纯 JS ZIP 解压 + 7-Zip 调用 + 单根目录上提 | ✅ | 只支持 store(0)/deflate(8) |
 | `web/index.html` | 页面骨架与脚本装载顺序 | ✅ | 22 行，顺序不可换 |
-| `web/panel-host.js` | `window.__ModuleLoader__` 适配器 | ✅ | 让插件版面板在没有 DSH 的网页里原样运行 |
+| `web/panel-host.js` | `window.__ModuleLoader__` 适配器 | ✅ | 让插件版面板在没有插件宿主的网页里原样运行 |
 | `web/panel.js` | 生图面板（插件版 `lib/client.js` 适配副本） | ✅ | ~146 KB / 2278 行；改动锚点见 §4.6 |
 | `web/app-shell.js` | 外壳：侧栏导航、顶栏徽标、页面懒加载、i18n、桥、日志抽屉 | ✅ | 页面桥 `window.__DCP_BRIDGE__` |
 | `web/i18n.js` | `t()` 词典 + 面板 DOM 运行时翻译器 | ✅ | MutationObserver + 精确词典 + 正则规则 |
@@ -108,7 +108,7 @@
 | `web/pages/pages.css` | 新页面样式 | ✅ | 新增类名必须写进这里（契约 §2） |
 | `web/styles/shell.css` | 外壳样式（含 `.panel-slot` 等） | ✅ | — |
 | `web/styles/workbench.css` | **三栏工作台布局样式**：栅格比例、每栏独立滚动、折叠、窄窗口 CSS 断点降级 | ✅ | `web/index.html` 第三个样式表；见 §4.8 |
-| `web/vendor/react.production.min.js` / `react-dom.production.min.js` | React UMD 生产构建 | ✅ | MIT；随项目携带，避免依赖 DSH 或 CDN |
+| `web/vendor/react.production.min.js` / `react-dom.production.min.js` | React UMD 生产构建 | ✅ | MIT；随项目携带，避免依赖宿主 或 CDN |
 | `web/vendor/LICENSE-react.txt` | React 许可 | ✅ | — |
 | `web/i18n/zh.json` / `en.json` | 词典：`ui` **333 键**、`panel` **317 键**、`panelRules` **4 条**、`panelPhrases`（`en` **57 条** / `zh` 空） | ✅ | 中英键数一致；`zh.panel` 把面板中文映射到自身 |
 | `assets/artists/Anima2B_Artist_Index_59k.txt` | 59,676 条画师 tag（Anima 2B 训练快照） | ✅ | MIT（ThetaCursed/Anima-Style-Explorer） |
@@ -524,7 +524,7 @@ react.production.min.js → react-dom.production.min.js → panel-host.js → pa
 
 ### 4.2 `web/panel-host.js` —— 最小宿主适配层
 
-面板半（`panel.js`）保留了插件版的 DSH 客户端模块包装：
+面板半（`panel.js`）保留了插件版的插件式客户端模块包装：
 
 ```js
 window.__ModuleLoader__.load({ id: "dsh-comfy-panel", factory: (require) => { ... } })
@@ -580,7 +580,7 @@ window.__ModuleLoader__.load({ id: "dsh-comfy-panel", factory: (require) => { ..
 
 ### 4.6 `web/panel.js` 相对插件版的改动锚点
 
-面板半 = 插件版 `lib/client.js` 的**适配副本**（保留 DSH 模块包装、保留全部业务逻辑与图构建器）。
+面板半 = 插件版 `lib/client.js` 的**适配副本**（保留插件式模块包装、保留全部业务逻辑与图构建器）。
 除下面这些锚点外，其余代码与上游保持逐行可比对；**这是维护本文件的核心约束**（决策 ②）。
 
 | # | 锚点（搜索用） | 插件版 | 独立版改法 |
@@ -591,14 +591,15 @@ window.__ModuleLoader__.load({ id: "dsh-comfy-panel", factory: (require) => { ..
 | 4 | 新增互斥工具 `toggleFavExclusive/toggleBlacklistExclusive/withoutBlacklisted/normalizeCustomArtist` | 无 | 收藏与黑名单互斥（后执行覆盖）；三档随机剔除黑名单；自定义画师名字规范化（去 `@`/下划线转空格/只留 Danbooru tag 字符） |
 | 5 | 图上三按钮（`curArtist` 段：`dcp-secrow`） | 无 | `⭐ 收藏/取消收藏`、`🎯 选为画师`（切到 `fixed` 并固定）、`🚫 拉黑/取消拉黑`；画师 tag 来自生成元数据或**落盘文件名**（`/<画师>_<序号>_00001_.png`） |
 | 6 | 指定画师分区（`artistMode === "fixed"`） | 只能从清单列表点选（「用户只能从列表选择」红线） | **两种来源**：清单/收藏里点选（可切「全部清单 / 仅收藏」）+ **自定义画师自由输入**（不校验清单、无二次确认，有意放宽原红线） |
-| 7 | 清单不可用文案 | `画师清单不可用：host 半未更新，重启 DSH Desktop 后可用` | 两处改为 `画师清单不可用：assets/artists/ 下缺少清单 txt（本次生成不注入画师）` 与 `…（自定义画师仍可直接输入使用）` |
-| 8 | `api()` 的 401/403 提示 | `请用启动日志里最新的带 token 地址重开页面`（DSH 签名 cookie） | 改为「局域网模式需要令牌，请用带 `?token=` 的地址打开页面」 |
+| 7 | 清单不可用文案 | `画师清单不可用：host 半未更新，重启 宿主应用 后可用` | 两处改为 `画师清单不可用：assets/artists/ 下缺少清单 txt（本次生成不注入画师）` 与 `…（自定义画师仍可直接输入使用）` |
+| 8 | `api()` 的 401/403 提示 | `请用启动日志里最新的带 token 地址重开页面`（宿主签名 cookie） | 改为「局域网模式需要令牌，请用带 `?token=` 的地址打开页面」 |
 | 9 | `exports.__test` 追加项 | — | 追加 `loadBlacklist, saveBlacklist, toggleFavExclusive, toggleBlacklistExclusive, withoutBlacklisted, normalizeCustomArtist, artistStore`；`BUILD_TAG` 已在列 |
-| 10 | `apply(ctx)` 与 `exports.inject = ["slots"]` | 由 DSH fiber 提供槽位 | 原样保留（`panel-host.js` 提供替身），仍注册到 `shell.overlay`，只是组件被外壳当作页面渲染 |
+| 10 | `apply(ctx)` 与 `exports.inject = ["slots"]` | 由插件宿主 fiber 提供槽位 | 原样保留（`panel-host.js` 提供替身），仍注册到 `shell.overlay`，只是组件被外壳当作页面渲染 |
 
-**已知遗留（不影响功能，勿当成 bug）**：第 8 点只改了两处，**面板里另有两处诊断文案仍写着「DSH 重启后旧 token 作废」**
-（`/comfy-panel/config` 拉取失败的 `catch`、画师清单拉取失败的 `catch`）。这是上游文本残留，若要清理请同步更新
-`web/i18n/en.json` 的 `panel` 词典键（词典用中文原文做键，改文案会让对应译文失配）。
+**已知遗留（不影响功能，勿当成 bug）**：第 8 点只改了面板两处 `catch` 文案，而 `web/i18n/{zh,en}.json` 的 `panel`
+词典里长期残留 6 条宿主时代的诊断文案（面板源码里已不存在这些原文，属纯历史残留）。**v1.2.0 已把这 6 条从两份词典删除**
+（键集仍保持 zh/en 一致，由 `scripts/check.js` 的第 [3] 项强制）。若以后再遇到同类残留，处理口径是：
+**先确认面板源码里已无该原文，再同时从 `zh.json` 与 `en.json` 的 `panel` 段删除**（词典用中文原文做键）。
 
 ### 4.7 为什么 i18n 用「DOM 层词典 + 正则规则」而不是改写面板源码
 
@@ -1089,22 +1090,22 @@ window.__ModuleLoader__.load({ id: "dsh-comfy-panel", factory: (require) => { ..
 
 ---
 
-## 11. 与 DSH 插件版的差异对照
+## 11. 与早期插件形态的差异对照
 
-| 维度 | DSH 插件版（`dsh-comfy-panel`） | 独立版（本项目） | 说明 |
+| 维度 | 早期插件形态 | 独立版（本项目） | 说明 |
 |---|---|---|---|
-| 宿主依赖 | 必须运行在 DSH Desktop 里，注册到 `shell.overlay` 插槽；宿主半（host）由 DSH 加载 | **零宿主依赖**：自带 Node 后端 + 静态页面，任何浏览器打开 `http://127.0.0.1:<port>/` 即可 | 面板半（`lib/client.js`）被原样复用，靠 `panel-host.js` 适配 |
-| 鉴权 | DSH 每次重启作废签名 Cookie；`/comfy-panel/*` 未带有效 token 全 401 | 默认回环无鉴权；**只**在开启 LAN 时要求 `X-DCP-Token`/`?token=` | 本机场景少了「重启就失效」的摩擦 |
-| 前端生效方式 | 走 DSH 的 `?rev=` 快照机制（改代码要重新构建/换 rev） | 静态托管 + `cache-control: no-store`，**改前端代码刷新即生效** | 面板 `BUILD_TAG` 仍在头部自证版本 |
+| 宿主依赖 | 必须运行在宿主应用里，注册到 `shell.overlay` 插槽；宿主半（host）由宿主加载 | **零宿主依赖**：自带 Node 后端 + 静态页面，任何浏览器打开 `http://127.0.0.1:<port>/` 即可 | 面板半（`lib/client.js`）被原样复用，靠 `panel-host.js` 适配 |
+| 鉴权 | 宿主每次重启作废签名 Cookie；`/comfy-panel/*` 未带有效 token 全 401 | 默认回环无鉴权；**只**在开启 LAN 时要求 `X-DCP-Token`/`?token=` | 本机场景少了「重启就失效」的摩擦 |
+| 前端生效方式 | 走宿主的 `?rev=` 快照机制（改代码要重新构建/换 rev） | 静态托管 + `cache-control: no-store`，**改前端代码刷新即生效** | 面板 `BUILD_TAG` 仍在头部自证版本 |
 | 收藏持久化 | 浏览器 `localStorage['dcp-artist-favs']` | 服务端 `data/artists.json`（随项目迁移走）；`localStorage` 仅作一次性导入源 | 面板的 `artistStore/persistArtists` 改读 `window.__DCP_ARTISTS__`、写 `window.__DCP_SAVE_ARTISTS__` |
 | 画师自定义与黑名单 | 红线：「只允许清单内画师」，指定模式只能从列表点选；无黑名单 | **有意放宽**：自定义画师自由输入即可用（做格式规范化）；新增黑名单（三档随机剔除，指定模式仍可搜到并标注）；收藏/黑名单**互斥、后执行覆盖** | 放宽的是产品策略，不是安全边界；见决策 ⑤ |
 | LLM 提示词能力 | 无 | 新增本地 LLM 页：llama.cpp 运行时安装、模型管理、abliterated 检索、会话式生成正负提示词、一键填回面板；**推荐模型目录**一键下载；「提示词工具」**填入 + 复制** | 系统提示词仍用 `assets/templates/anima-system-prompt.txt` 原文 |
 | **推理来源** | 无（LLM 功能本身不存在） | **本地模型（llama.cpp）或外接 API（OpenAI 兼容）二选一**；外接模式只需 baseUrl / Key / 模型名，**只做纯聊天内核** | 见决策 ⑮；Key 只落 `data/settings.json` |
 | **角色识别** | 无 | Danbooru 角色词表（40,931 条角色 tag）+ 563 条内置中文别名 + 用户别名；模型漏角色时**补进正向提示词并显式告知** | 见决策 ⑭ |
 | 下载镜像策略 | 安装器为 PowerShell 脚本，镜像逻辑内嵌在脚本里 | 统一在 `download.js`：官方源优先 → 按 URL 主机自动推导镜像（hf-mirror / **ModelScope** / GitHub 代理）；超时 / 慢速 / **停滞**阈值**全部可在设置里调** | 见决策 ⑫/⑯ |
-| 进程/托盘 | 依附 DSH 进程，不管理 ComfyUI 之外的东西 | 后端自己拉起/停止 ComfyUI 与 llama-server，**启动器侧另起独立托盘进程**（打开 UI / 复制地址 / 打开日志 / 关闭并停止后端）并把控制台最小化到任务栏；**页面侧仍不提供窗口开关** | 见决策 ④（页面）与 ⑰（启动器） |
+| 进程/托盘 | 依附宿主进程，不管理 ComfyUI 之外的东西 | 后端自己拉起/停止 ComfyUI 与 llama-server，**启动器侧另起独立托盘进程**（打开 UI / 复制地址 / 打开日志 / 关闭并停止后端）并把控制台最小化到任务栏；**页面侧仍不提供窗口开关** | 见决策 ④（页面）与 ⑰（启动器） |
 | 数据位置 | 收藏在浏览器；安装状态在插件目录 | 全部在项目内 `data/`（设置/收藏/LLM 清单与会话/向导状态/**角色词表与别名**）与 `logs/` | 迁移即拷贝，见 `MIGRATION.md` |
-| 安装方式 | 由 DSH 插件机制安装/更新 | 解压即用；`start.cmd` 启动；首次运行走向导；`scripts/build-core.ps1` 产出可上传的核心版 | 运行时与权重全部由向导获取 |
+| 安装方式 | 由 早期插件形态机制安装/更新 | 解压即用；`start.cmd` 启动；首次运行走向导；`scripts/build-core.ps1` 产出可上传的核心版 | 运行时与权重全部由向导获取 |
 
 ---
 
@@ -1124,7 +1125,7 @@ window.__ModuleLoader__.load({ id: "dsh-comfy-panel", factory: (require) => { ..
   由 `web/panel-host.js` 提供 `require('react')` 与 `ctx.slots.*` 替身。
 - **理由**：面板是 2000+ 行、经真实出图实测的 UI 与图构建器（含 v0.4–v0.9 的崩图修复、管线兼容性表、逐张生成、参考图等）；
   重写意味着把这些坑再踩一遍。
-- **代价**：必须保留 DSH 模块包装（看起来像无用样板）、少量锚点改造（§4.6 十项），以及上游文案残留（§4.6 末尾已列明）；
+- **代价**：必须保留插件式模块包装（看起来像无用样板）、少量锚点改造（§4.6 十项），以及上游文案残留（§4.6 末尾已列明）；
   改面板时要同时维护「与上游可比对」这条约束。
 
 ### ③ 面板 i18n 用 DOM 词典 + 正则规则
@@ -1442,13 +1443,14 @@ window.__ModuleLoader__.load({ id: "dsh-comfy-panel", factory: (require) => { ..
 
 | 版本 | 日期 | 说明 |
 |---|---|---|
-| v1.0.0 首次编写 | — | 与 `comfy-panel-standalone v1.0.0` 同步；覆盖架构、后端逐模块、前端与面板改造锚点、数据、安装向导、配置、接口、安全边界、FAQ、与 DSH 插件版差异、决策记录、验证记录与后续建议 |
+| v1.0.0 首次编写 | — | 与 `comfy-panel-standalone v1.0.0` 同步；覆盖架构、后端逐模块、前端与面板改造锚点、数据、安装向导、配置、接口、安全边界、FAQ、与早期插件形态差异、决策记录、验证记录与后续建议 |
 | v1.0.0（第二轮） | 本轮追加 | 交付物清单补 `server/characters.js`、`installer/llm-models.json`、`web/pages/workbench.js`、`web/styles/workbench.css`、`scripts/tray.ps1`；后端补 characters 词表模块与 `llm.js` 的 `provider` 分支、下载的 ModelScope / 停滞双阈值 / UA+Range+看门狗与 `normalizeDownloadUrl`；前端补**工作台布局**（§4.8）与 i18n 现状（333 / 317 / 4）；数据表补 `data/characters/` 与 `data/character-aliases.json`；接口补 7 个新端点；配置表补 `llm.provider`/`llm.api.*`/`download.modelscope`/`useModelScope`/`stallKBs`；决策记录**追加 ⑬–⑲**；验证记录补 3 条未实测项并新写 **附录 H（第二轮改动实测）**。**如实标注**：9B 默认模型的下载与加载运行验证尚未完成 |
 | v1.0.0（第二轮补强） | 本轮追加 | 内置中文别名从 101 条扩到 **563 条**（覆盖 Re:Zero / FGO / 东方 / VOCALOID / 原神 / 星穹铁道 / 绝区零 / 鸣潮 / 明日方舟 / Blue Archive / 赛马娘 / hololive / nijisanji / 火影 / 海贼 / 龙珠 / 美少女战士 / 魔卡少女樱 / P5 / 赛博朋克 / 守望先锋 / LOL 等主流作品），**每一条都用 `danbooru.csv` 逐条核对**（583 条候选 → 删 20 条 → **563/563 精确命中**，运行时自检 `aliasMisses=0`）；刻意排除「时 / 天天 / 天使 / 真理 / 琴 / 小美 / 白露 / 悠悠 / 陈 / 玛丽 / 吉尔 / 忧」等常用中文词；新增设置项 `llm.characterRepair`（角色词表补全开关，默认开）。 |
 | v1.0.0（第三轮） | 本轮追加 | §3.7 外接 API 补 `apiRequestBody()`（关思考双写法）/ `listApiModels()` / `normalizeApiBase()` / 空闲看门狗 / 退避重试与新的 api 配置键（`thinking`/`retries`/`idleMs`/`maxTokens`）；§8.3 补 `POST /app/llm/api/models`；§4.8 改写为"面板内三栏 1:1:2 + 画师独立页 + LLM portal 插槽"；决策记录追加 **㉑（关思考）㉒（三栏与画师页）㉓（turbo 默认 / 4B 迁移 / 推荐只给链接）**；验证记录补 DeepSeek 12/12、工作台 16/16、round2-ui 23/23；新增 **附录 K**。 |
 | v1.0.0（第四轮） | 本轮追加 | 回车发送；外接 API **推理四挡**（`reasoning_effort`，实测 off/low/high/max；旧 `thinking` 自动迁移）；`sendContext`/`keepMessages` 上下文策略（界面留历史、默认不外发）；工作台重排（LLM 栏首、提示词工具第二、提示词与参考图进左栏、主图变小/历史变大、跳转图片文件夹）；默认画师 **大随机**；切模型不再清空提示词；新增 **`server/works.js`** 与本机作品接口（`/app/artists/works`、`/app/output/file`、`/app/open-folder`）；决策追加 **㉔㉕**；验证补 round4 30/30、round2-ui 23/23、round3-api 13/13、llm-test LLM_OK；新增 **附录 L** |
 | v1.0.0（第五轮） | 本轮修复 | **修复"双击 start.cmd 启动失败"的真实缺陷**：`.cmd` 由 LF+UTF-8 中文改为 **纯 ASCII + CRLF**（cmd.exe 按 OEM 代码页读批处理，中文注释会把行尾吃掉 → exit 9009）；`check.js` 新增 **[4b] 批处理编码红线**（自检 16 → **17 项**）；用 `Start-Process <包>\start.cmd`（等价双击）补上验收缺口；决策追加 **㉖**、新增 **附录 M**。 |
 | v1.0.0（第六轮） | 本轮调整 | **最小下载挡位改为 `anima-turbo-v1.1.safetensors`**：`installer/models.json` 里 turbo 由 standard 提到 minimal，Anima-3.8B-v1.1 与 qwen35_4b 降到 standard → minimal **14.00 GiB → 5.24 GiB**（standard 25.69 / full 47.27 不变）；决策追加 **㉗**；向导/计划接口实测 `tiers={5.24, 25.69, 47.27}`。 |
+| **v1.2.0**（第九轮） | 本轮修复+新增 | ①**输出目录不再写死**（§3.5/§3.10 与 §8.1 的 `/app/comfy/outputdir`、§9 新增边界行）：新增设置 `comfy.outputDir` 覆盖，留空时按「本程序拉起的实例 → 监听端口进程的命令行反推其入口目录 → 按模式推导」三级解析（`works.outputInfo()`，缓存 10 s）。修掉用户实测的严重问题：他自己在别处起 ComfyUI 时，本程序把「图片文件夹」与「本机作品」指向项目内的空目录，生成的照片"根本不出现在图片文件夹里"（本机实测真实出图在外部实例的 `output\<模型>\` 下，共 470 张）。②**删除历史照片**（§4.4 锚点 + `/app/output/delete`）：面板图片栏（缩略图 / 当前图）与画师页「本机作品」都能删；**两步确认**且确认按钮写明文件名（`deleteArm` 绑定"被武装的那张图"，不随 `current` 漂移）；后端只允许删 output 目录内的图片（越界/非图片 404），删空的模型子目录一并移除，并清掉 ComfyUI 历史里那条（尽力而为）。③**画师分组（最多 50 组，`store.MAX_GROUPS`）**：`data/artists.json` 新增 `groups`，新接口 `/app/artists/groups{,/create,/rename,/delete,/add,/remove}`；画师页新增分组卡片与行内「＋分组」菜单；面板新增 `randomGroup` 模式 + 具体组下拉（`artistGroups`/`artistGroupPick`）。**顺带修掉一个数据流缺陷**：面板 `persistArtists()` 写回 `window.__DCP_ARTISTS__` 时丢掉了 `groups`（面板一挂载就写一次），导致"分组随机"恒为 0 组。④**API Key 改成只写字段**（§3.1 `/app/settings` + §3.2 `save()`）：下发一律 `apiKey: ''` + `hasKey`，保存时空串 = "不改"，清空须 `llm.api.clearKey=true`；设置页显示"已配置/未配置"并加「清除 Key」。修掉"切一下思考挡位就得重新输入 API Key"（实测复现：设置页形状的保存把已存 Key 抹成空）。⑤**下载前逐源测速再固定用最快源**（§3.4）：`pickFastest()`/`probeSpeed()`，每源探 1 MiB 或最多 6 s，按实测 MB/s 排序，同一"来源家族"（host + 目录前缀）10 分钟内沿用最快源、不再重复测速；原有三条换源规则保留为兜底。⑥版本号 → `v1.2.0`；⑦验证记录见附录 P（UI 27/27、下载选源 11/11、B5 4/4）。 |
 | **v1.1.0**（第八轮） | 本轮修复+新增 | ①**逐条核对 `BUGS-AND-FIXES.md` 并修复**（B6/B7/B8/B9 在本仓库确实存在，B5 也确是缺陷）：§3.1 的 `/app/state` 补 `llm.provider`/`llm.api`/`listen`（B6/B7），§4.4/§4.3 的前端就绪度与顶栏徽标改按来源判定（B6）；`web/app-shell.js` 的 `api()` 对纯对象 body 自动 `JSON.stringify`（B8）；§3.2 自检按 `llm.provider` 条件化（B9）；§3.6 向导 `setup.json` 的 `models` 合并 `installed + skipped`（B5）；§9 新增**回环来源豁免**的边界说明（B7 的第三层缺口：本机页面与 `start.ps1` 探活都不该被令牌挡下）。②**恢复面板「🔍 指定画师」的搜索框与下拉**（§4.6 锚点：v1.0.1 迁移画师管理到独立页时误删了渲染块，`artistQuery`/`artistDropOpen`/`artistFavOnly`/`artistCustom`/`useCustomArtist` 全部成为死代码），并按需求提供**收藏画师搜索**（仅收藏范围点开即列全部收藏、子串过滤、点选即用）。③新增 i18n 键 `settings.listen.lanEnabled`。④验证记录见 §13.1 与附录 O（本轮 UI 验收 23/23、B5 4/4）；⑤新增 **`AI-DECLARATION.md`**（AI 生成声明：本项目自身全部代码与文档由 AI 生成 + 第三方边界 + 免责 + "以实测记录为准"的指引），并加入 `scripts/build-core.ps1` 的 `$IncludeFiles` 白名单与"交付文档齐全"检查（附录 O.5）。 |
 | v1.0.0（第七轮） | 本轮修复+新增 | ①新增 `GET /app/jobs`（列表 + running），向导按 `kind=setup` 重挂运行中任务，顶栏加全局任务条；②**下载引擎字节计数从未生效**（`got` 恒为初值）—— 进度/速度恒 0、停滞看门狗误杀正常下载，计数器改挂 `pipeline` 的 `Transform`；③**改名之前校验完整性**（实测 ModelScope 会把 242 MB 下成 126/121/112/3 MB 而流"正常结束"，旧代码会静默接受损坏文件）；④**`force` 一路传到下载引擎**（否则"重新下载"2.5 秒就"完成"）；⑤镜像梯队全面数据化（`hfMirrors`/`nodeMirrors`/`jsdelivrMirrors`/`githubProxies`/`extraMirrors` + 9 个占位符），并落地「10 s 无进展换源」+「15 s 无新字节判停滞」+「远慢于已见最佳源即换源」；⑥新增 `GET /app/download/speedtest`（每源真下 100 MiB）与设置页测速表；⑦角色 tag 规范化（含 Markdown 转义 `rem \(re:zero\)`），新增 `charactersFixed` 帧与 i18n 键；⑧`save()` 不再把派生梯队/等于默认值的 `githubProxies` 写进 `settings.json`；⑨项目改名「超低门槛 ComfyUI 工作流集成应用」；⑩新增 **`docs/HANDOVER.md` 项目交接文档**。决策追加 **㉘–㉝**，新增 **附录 N（镜像实测全表）**。**如实标注**：GitHub 系资源只有 gh-proxy.com 与 down.npee.cn 两个快源；`anima-turbo-v1.1`（4.2 GB）只有 ModelScope 是快源。 |
 
@@ -1988,4 +1990,74 @@ exit 0
 ```
 
 （跑完后 `release/core` 属构建产物，未留在开发副本里；下次打包会先清空再生成。）
+
+---
+
+## 附：第九轮实测补充（v1.2.0：分组 / 删除 / 输出目录 / Key 只写 / 下载选源）
+
+> 本轮全程在一台**装有真实 ComfyUI 与权重的开发机**上做端到端验证（ComfyUI 0.37.0 跑在 8188，
+> 权重 anima-turbo-v1.1 + qwen_3_06b_base + qwen_image_vae，输出目录里已有 470 张历史作品）。
+> 覆盖脚本：`.scratch/round9-ui.cjs`（无头 Edge 真实点击 + 真实出图）、`.scratch/r9-download.cjs`（离线镜像限速）、
+> `.scratch/api-key-reasoning.cjs`（真实 DeepSeek 外接 API）、`.scratch/b5-setup-models.cjs`。
+
+### P.1 三处根因（都不是"猜"出来的，是实测定位的）
+
+| 现象（用户报告） | 根因 | 证据 |
+|---|---|---|
+| **"生成的照片根本不会出现在对应的图片文件夹中"**（第 4 项） | 应用把"图片文件夹"解析成**按 `comfy.mode` 推导的目录**。用户实测环境是**自己在别处起的 ComfyUI**（外部安装），真实出图在**那个实例**的 `output\<模型>\` 下；而应用指的是项目内 `runtime\comfyui\ComfyUI\output` —— 那里只有一个占位文件。所以「本机作品」= 0 张、「📂 跳转到图片文件夹」打开空目录 | 修复前：`/app/comfy/outputdir` 解析为项目内目录、`count=0`；`D:\...\runtime\comfyui\ComfyUI\output` 递归只有 `_output_images_are_put_here`。修复后：`source=running:running-process`、指向外部实例的 output、`count=468~470`、151 位画师。另：真实出图的命名规范**本来就是对的**（`anima-turbo-v1.1\<画师>_<序号>_00001_.png`），问题只在"看哪里" |
+| **"切一下思考挡位就得重新输入 API Key"**（第 3 项） | 设置页保存时会把**整份 `llm.api` 回传**（含 `apiKey`），而页面手里的 Key 常常是空的（`/app/settings` 曾经回显明文 Key，但页面副本可能早于粘贴动作）→ 后端 `save()` 把空串当新值写入 → **已存 Key 被抹掉**。抹掉后任何"思考挡位"当然都用不了 | 复现脚本 `api-key-reasoning.cjs` 的 `[3]`：用设置页形状的 body（`apiKey: ''`）PUT 一次 → `hasKey=false`、`/app/llm/api/test` 失败。修复后同一步 `hasKey=true` 且连接仍通；`clearKey: true` 仍能真正清空 |
+| **"选了指定位却搜不了"**（第八轮遗留、本轮确认） | 面板 `persistArtists()` 写回 `window.__DCP_ARTISTS__` 时只带 favs/blacklist —— 而面板一挂载就会 `saveFavorites()` 一次，于是 `groups` 被抹掉；"分组随机"恒为 0 组（同类写回缺陷在第八轮造成的是"指定画师搜索框被整体删除"） | 修复前 `window.__DCP_ARTISTS__ = {"favs":[],"blacklist":[]}`、分组下拉不出现；修复后带 `groups`，下拉显示 `组名（N 位）` |
+
+### P.2 验收结果（都是实跑）
+
+| 用例 | 覆盖 | 结果 |
+|---|---|---|
+| `.scratch/round9-ui.cjs` | #4 输出目录解析（4 项）· #2 分组建/加/移出/面板分组随机（7 项）· #1 画师页删除（6 项，含两步确认与空目录清理）· #4/#1 端到端**真出一张图**（落在 `anima-turbo-v1.1\wlop_1_00001_.png`，面板显示、按组随机确实注入了组内画师 `@wlop`）并用**面板自己的 🗑** 删掉（6 项） | **27/27** |
+| `.scratch/r9-download.cjs` | 本机两台限速镜像（300 KB/s vs 4 MB/s）：逐源测速表、选最快、慢源只被探一次、**同族下一个文件不重复测速** | **11/11** |
+| `.scratch/api-key-reasoning.cjs` | 写入/局部改挡位/设置页形状保存/显式清除/重新填入 + `reasoning=low` 与 `off` 的真实对话出正文 | **17/17** |
+| `.scratch/b5-setup-models.cjs` | 向导 `setup.json` 记全 `installed + skipped` | **4/4** |
+| 回归 | `scripts/check.js` **17/17** · `panel-test` **32/32** · `round5-partial`（下载防线）**8/8** · `round2b-alias` **9/9** · `round5-chars` **10/10**（后两者需 `data/characters/danbooru.csv`，缺词表时各少 1 项，属环境项） · `round8-ui`（第八轮 23 项） | 全绿 |
+| 打包 | `scripts/build-core.ps1` 实跑：核心版文件数、隐私/权重/Python/GPL 四项扫描零命中、交付文档齐全、语法自检通过 | exit 0 |
+
+### P.3 如实说明：本轮发生的一次人为数据损失
+
+写第 3 项"删除本机作品"的验收脚本时，**第一次版本用错了选择器**（把作品卡片的搜索框与画师检索框混了），
+导致脚本在"未按关键词过滤"的列表上删掉了**列表第一张**——那是用户的真实作品
+`<output>\anima-turbo-v1.1\arere (k1m6wv)_9_00001_.png`（1,178,197 B，2026-09-26 02:56:57 生成）。
+
+- **已尝试的恢复手段**：① 全盘搜同名文件（无）；② Windows 回收站（`fs.rmSync` 不进回收站，无）；
+  ③ 从 ComfyUI 历史里取回原始 graph 重跑同一 seed —— **该版本 `/history` 的 `prompt` 字段是"执行顺序"而不是图**，
+  `/internal` 相关端点与 `user\comfyui.db` 里都没有存图本身，故**无法按原参数还原**。
+- **结论**：该图**不可恢复**。已如实告知使用者，并把验收脚本改成**任何删除动作都必须先正向识别目标**
+  （只允许删自己造的 `keep_1_*` 副本或本次刚生成的那张），该闸门已写进脚本与本文档。
+- 教训（值得留给后续轮次）：**凡是对真实数据有破坏性的用例，先用"正样本识别"把目标钉死，再动手**；
+  这一步比任何事后校验都重要。
+
+### P.4 新增/变更的接口与设置（同步 `docs/INTERNAL-CONTRACT.md`）
+
+| 项 | 位置 |
+|---|---|
+| 新增设置 | `comfy.outputDir`（图片文件夹可选覆盖；空 = 自动判定） |
+| 新增接口 | `GET /app/comfy/outputdir`、`GET /app/artists/groups`、`POST /app/artists/groups/{create,rename,delete,add,remove}`、`POST /app/output/delete` |
+| 变更接口 | `GET/PUT /app/settings`：`llm.api.apiKey` 一律下发 `''` 并附 `hasKey`；`PATCH` 语义上"空串 = 不改"，清空须 `llm.api.clearKey=true` |
+| 变更接口 | `GET /app/artists/lists` 增加 `groups`；`GET /app/state` 的 `comfy` 增加 `outputDir/outputSource/outputOverride` |
+| 数据文件 | `data/artists.json` 增加 `groups: [{name, items:[tag]}]`（最多 50 组，`store.MAX_GROUPS`） |
+| 新增 i18n 键 | `settings.llm.apiKey.{stored,empty,storedHint,emptyHint,willSave,clear,clearConfirm,cleared}`、`artists.groups.*`、`artists.works.delete*` |
+| 下载行为 | `download()` 新增前置步骤"逐源测速"（`pickFastest`/`probeSpeed`），并提供 `noProbe: true` 关闭 |
+
+### P.5 去历史宿主名与 i18n 补齐（同一轮内的收尾）
+
+- **介绍与文档**：项目已与任何插件宿主无关，故 `README.md` / `README.en.md` 的定位句改为"独立运行、开箱即用…不需要任何插件宿主或外部平台"；
+  `FEATURES.md`、`FULL-REFERENCE.md`（§11 与 §4.6 对照表）、`HANDOVER.md`、`MIGRATION.md` 里的旧宿主名统一改为中性说法
+  （"早期插件形态"/"宿主应用"）；`THIRD_PARTY.md` 删除"旧宿主本体"组件行与"不分发"清单项，并把 React 一行改为
+  "随本仓库携带 `web/vendor/`（18.3.1 UMD）"（原写法还停留在"由宿主提供"，与事实不符）。
+- **AI 声明**：`AI-DECLARATION.md` 里"某具体助手平台会话"改为"对话式编码智能体"（声明本身不变：全部代码由 AI 生成）。
+- **代码注释**：`server/comfy.js`、`web/app-shell.js`、`web/panel-host.js`、`web/panel.js` 共 39 处旧宿主名改为中性说法。
+- **词典残留**：`web/i18n/{zh,en}.json` 的 `panel` 段删除 6 条宿主时代文案（面板源码中已不存在这些原文），键集仍 100% 一致。
+- **i18n 补齐（本轮新发现的真问题）**：英文界面曾残留 8 条中文（面板标题、分组随机、删除按钮等），原因是本轮新增面板文案没进词典、
+  且面板标题的正则规则还是改名前的旧写法。已补 4 条 `panel` 词条 + 5 条 `en.panelPhrases` 规则，并把分组下拉选项改成
+  `名称 (N)`（不再拼中文量词）。回归：`.scratch/round2-i18n.cjs` **7/7**（该脚本已加入本树 `.scratch`）。
+- **刻意保留**：`web/panel.js` 的三处 `SaveImage` 兜底前缀 `DSH_Panel/Anima|AnimaPlain|Qwen` **未改** —— `panel-test.cjs` 的红线是
+  "不传 `savePrefix`/`refImage` 时三条管线的图与上游插件版**逐字节等价**"，改名会让该断言失败；而面板**始终**会传 `savePrefix`，
+  这三处在正常路径上永不生效、用户看不到。若要清零，需把等价比对改为"除该字段外一致"（会削弱这道保护）。
 

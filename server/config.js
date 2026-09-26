@@ -40,7 +40,7 @@ const paths = {
   llmLog: path.join(ROOT, 'logs', 'llama-server.log'),
 };
 
-const VERSION = '1.1.0';
+const VERSION = '1.2.0';
 const BUILD_TAG = 'v' + VERSION;
 
 const DEFAULTS = {
@@ -50,6 +50,10 @@ const DEFAULTS = {
   comfy: {
     mode: 'embedded',      // embedded | external
     dir: '',               // 外接模式的 ComfyUI 目录（用户填写的绝对路径，只存在 data/ 内）
+    // v1.2.0：输出目录（图片文件夹）可选覆盖。留空 = 自动判定：优先跟随**实际在跑的那个
+    // ComfyUI**（本程序拉起的实例，或监听 comfy.port 的进程命令行反推其入口目录），
+    // 再回落到按 embedded/external 推导的候选。
+    outputDir: '',
     port: 8188,
     autoStart: false,
     extraArgs: [],
@@ -164,6 +168,8 @@ function normalize(s) {
   out.listen.host = out.listen.lan ? '0.0.0.0' : '127.0.0.1';
   out.listen.port = clampInt(out.listen.port, 1, 65535, 8788);
   out.comfy.mode = out.comfy.mode === 'external' ? 'external' : 'embedded';
+  out.comfy.dir = String(out.comfy.dir || '').trim();
+  out.comfy.outputDir = String(out.comfy.outputDir || '').trim();   // 空 = 自动判定（works.outputInfo）
   out.comfy.port = clampInt(out.comfy.port, 1, 65535, 8188);
   out.llm.port = clampInt(out.llm.port, 1, 65535, 8199);
   out.llm.contextMessages = clampInt(out.llm.contextMessages, 0, 20, 5);
@@ -284,9 +290,20 @@ function load() {
 const DERIVED_KEYS = ['hfMirrors', 'nodeMirrors', 'jsdelivrMirrors', 'extraMirrors'];
 
 function save(patch) {
-  const next = normalize(deepMerge(load(), patch || {}));
-  const raw = fsx.readJson(paths.settingsFile, {});
   const p = patch || {};
+  // v1.2.0（修复"切一下思考挡位就得重新输入 API Key"）：API Key 是**只写**字段。
+  // 设置页保存时会把整份 llm.api 回传，而它手里的 Key 往往是空的（GET /app/settings 已不回显明文；
+  // 或页面副本早于用户粘贴 Key 的那次保存）—— 旧行为会把已存的 Key 覆盖成空串。
+  // 规则：patch 里的 apiKey 为空/空白 = "不改"，保留已存值；确实要清空时显式传 llm.api.clearKey=true。
+  if (p.llm && p.llm.api && typeof p.llm.api === 'object') {
+    const clear = p.llm.api.clearKey === true;
+    delete p.llm.api.clearKey;                       // 不是设置项，别落进 settings.json
+    const ak = p.llm.api.apiKey;
+    if (clear) p.llm.api.apiKey = '';
+    else if (ak !== undefined && String(ak).trim() === '') delete p.llm.api.apiKey;
+  }
+  const next = normalize(deepMerge(load(), p));
+  const raw = fsx.readJson(paths.settingsFile, {});
   const toDisk = JSON.parse(JSON.stringify(next));
   for (const k of DERIVED_KEYS) {
     const explicit = (p.download && p.download[k] !== undefined) || (raw.download && raw.download[k] !== undefined);

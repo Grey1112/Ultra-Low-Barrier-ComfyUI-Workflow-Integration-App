@@ -17,8 +17,8 @@
 | **Qwen-Image 2.1 系权重** | `Comfy-Org/Qwen-Image-2.1`（再打包仓库）：扩散模型 `qwen_image_2.1_int8_convrot`、文本编码器 `qwen3vl_8b_w4a8`、VAE `qwen_image_2.1_vae_bf16`；base_model = `Qwen/Qwen-Image-2.1` | **Qwen Research 许可**（模型卡 `license: other` / `license_name: qwen-research`） | ❌ 否 | 「Qwen-Image 2.1」管线（扩散模型 + 4096 维编码器 + 64 通道 VAE） |
 | **Qwen3 系底模（编码器 / VAE 的实际内容）** | `qwen_3_06b_base`（Qwen3-0.6B，随 `circlestone-labs/Anima` 分发）、`qwen35_4b`（Qwen3.5-4B，随 `lylogummy/Anima-3.8B` 分发）、`qwen_image_vae`（Qwen-Image，随 `circlestone-labs/Anima` 分发） | 底模 **Apache-2.0**；但随 Anima 系仓库分发的文件**另受 CircleStone NC v1.2 约束**（取更严格者） | ❌ 否 | Anima 的文本编码器与 16 通道 VAE |
 | **画师清单** `Anima2B_Artist_Index_59k.txt` / `Anima2B_Artist_top200.txt` | https://github.com/ThetaCursed/Anima-Style-Explorer，Copyright (c) 2026 ThetaCursed | **MIT** | ✅ **是**（`data/artists/`） | 面板「随机画师」大池（59,676 条）/ 小池（前 200 条）与画师搜索的数据源 |
-| **DSH Desktop** | 用户自备（本项目不分发、不下载） | 依其自身许可（本机安装包声明 MIT，此处仅作说明） | ❌ 否 | 插件宿主环境；面板注册在 `shell.overlay` 插槽 |
-| **React** | 由 DSH 运行环境提供（本仓库不捆绑 `node_modules`） | MIT | ❌ 否 | 浏览器半 UI 的唯一运行时依赖 |
+| **宿主应用** | 用户自备（本项目不分发、不下载） | 依其自身许可（本机安装包声明 MIT，此处仅作说明） | ❌ 否 | 插件宿主环境；面板注册在 `shell.overlay` 插槽 |
+| **React** | 随本仓库携带：`web/vendor/react.production.min.js`、`react-dom.production.min.js`（React 18.3.1 UMD） | MIT | ✅ 是 | 浏览器半 UI 的唯一运行时依赖（不联网、不构建） |
 
 ## 2. 各组件义务
 
@@ -83,7 +83,7 @@ Anima 3.8B v2 路线的可选运行时依赖。若**你**要随包分发该节�
 - ❌ 任何模型权重（`*.safetensors` / `*.ckpt` / `*.pt` / `*.pth` / `*.onnx` / `*.gguf`）
 - ❌ ComfyUI 本体、便携包、`venv/`、`python_embeded/`
 - ❌ 任何画师作品图片（画师图片子目录已在 `.gitignore` 中排除；`data/artists/` 只有两份 `.txt` 文本清单）
-- ❌ DSH Desktop 本体或其配置
+- ❌ 宿主应用 本体或其配置
 - ❌ 生成结果图片与运行日志
 
 ## 4. 不确定点（发布前建议二次核对）

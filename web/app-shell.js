@@ -1,6 +1,6 @@
 // app-shell.js —— 独立版外壳：导航、状态、i18n、长任务、面板落位与页面桥。
 //
-// 与插件版的关系：面板半（panel.js）原样复用，只是从"DSH 的 shell.overlay 槽位"改成
+// 与插件版的关系：面板半（panel.js）原样复用，只是从「插件宿主的 shell.overlay 槽位」改成
 // 本外壳页面里的一个标签页；外壳自己提供设置 / 首次运行向导 / 本地 LLM / 画师管理四个页面。
 
 import { t as tGlobal, loadLang, getLang, installTranslator, retranslateAll } from './i18n.js';
@@ -140,6 +140,10 @@ function App() {
     try {
       const st = await api('/app/state');
       setState(st);
+      // v1.2.0：顺手重拉设置。设置页保存后会调用 refresh()，而页面挂在 props.settings 上的那份
+      // 是装载时的快照 —— 它过期后回传的旧值（尤其是空的 API Key）会覆盖用户在别处刚改好的配置。
+      // 后端已把空 Key 当"不改"（双重保险），这里再把快照刷新掉，避免其它字段也被旧值回写。
+      try { setSettings(await api('/app/settings')); } catch { /* 设置拉取失败不影响状态刷新 */ }
       return st;
     } catch (e) {
       setBootError(e.message);
@@ -158,7 +162,7 @@ function App() {
         await loadLang(se.lang || st.lang || 'zh');
         setLang(getLang());
         const arts = await api('/app/artists/lists');
-        window.__DCP_ARTISTS__ = { favs: arts.favs || [], blacklist: arts.blacklist || [] };
+        window.__DCP_ARTISTS__ = { favs: arts.favs || [], blacklist: arts.blacklist || [], groups: arts.groups || [] };
         // 一次性迁移：插件版把收藏存在浏览器 localStorage（key dcp-artist-favs）。
         try {
           const raw = localStorage.getItem('dcp-artist-favs');
@@ -166,7 +170,7 @@ function App() {
             const items = JSON.parse(raw);
             if (Array.isArray(items) && items.length) {
               const r = await post('/app/artists/import', { items });
-              window.__DCP_ARTISTS__ = { favs: r.favs || [], blacklist: r.blacklist || [] };
+              window.__DCP_ARTISTS__ = { favs: r.favs || [], blacklist: r.blacklist || [], groups: r.groups || [] };
               if (r.imported) toast(tGlobal('artists.imported') + ' ' + r.imported, 'ok');
             }
           }
@@ -179,6 +183,16 @@ function App() {
           } catch (e) {
             toast(tGlobal('toast.failed') + '：' + e.message, 'error');
           }
+        };
+        // v1.2.0：画师页改完分组/收藏后，用这个把共享数据（含分组）刷回来 —— 面板的分组下拉
+        // 与"分组随机"池子都读 window.__DCP_ARTISTS__，刷新后广播 dcp-artists-changed 让面板同步。
+        window.__DCP_REFRESH_ARTISTS__ = async () => {
+          try {
+            const a = await api('/app/artists/lists');
+            window.__DCP_ARTISTS__ = { favs: a.favs || [], blacklist: a.blacklist || [], groups: a.groups || [] };
+            window.dispatchEvent(new CustomEvent('dcp-artists-changed'));
+            return window.__DCP_ARTISTS__;
+          } catch { return null; }
         };
         setReady(true);
       } catch (e) {

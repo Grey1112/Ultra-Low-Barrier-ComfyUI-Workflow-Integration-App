@@ -44,6 +44,14 @@ export default function ArtistsPage(props) {
   const [worksQuery, setWorksQuery] = useState('');
   const [works, setWorks] = useState(null);      // null=还没查；否则 {items,total,artists,dir}
   const [worksBusy, setWorksBusy] = useState(false);
+  const [delArm, setDelArm] = useState('');      // v1.2.0：待确认删除的作品 URL（两步确认，不弹原生对话框）
+  // v1.2.0：画师分组（最多 50 组）+ 加组菜单状态
+  const [groups, setGroups] = useState([]);
+  const [pickFor, setPickFor] = useState('');        // 正在为哪个画师选分组（点开菜单）
+  const [newGroupName, setNewGroupName] = useState('');
+  const [menuNewName, setMenuNewName] = useState('');
+  const [groupArm, setGroupArm] = useState('');      // 待确认删除的分组名
+  const [groupBusy, setGroupBusy] = useState('');
 
   const mounted = useRef(true);
   useEffect(() => {
@@ -63,6 +71,7 @@ export default function ArtistsPage(props) {
       if (!mounted.current) return;
       setFavs(Array.isArray(r && r.favs) ? r.favs : []);
       setBlacklist(Array.isArray(r && r.blacklist) ? r.blacklist : []);
+      setGroups(Array.isArray(r && r.groups) ? r.groups : []);
       setLoaded(true);
     } catch (e) { fail(e); }
   }, [api, fail]);
@@ -71,6 +80,82 @@ export default function ArtistsPage(props) {
 
   const isFav = useCallback((tag) => favs.indexOf(tag) >= 0, [favs]);
   const isBlocked = useCallback((tag) => blacklist.indexOf(tag) >= 0, [blacklist]);
+
+  // ── v1.2.0：画师分组 ─────────────────────────────────────
+  const GROUP_MAX = 50;                              // 与后端 store.MAX_GROUPS 一致
+  const groupNamesOf = useCallback((tag) => groups.filter((g) => (g.items || []).indexOf(tag) >= 0).map((g) => g.name), [groups]);
+
+  /** 分组接口统一入口：成功后刷新本地列表 + 通知面板（面板的「分组随机」下拉立刻更新）。 */
+  const groupOp = useCallback(async (act, payload, okMsg) => {
+    setGroupBusy(act + ':' + (payload && (payload.name || payload.group || '')));
+    setErr('');
+    try {
+      const r = await api('/app/artists/groups/' + act, { method: 'POST', body: payload });
+      if (r && Array.isArray(r.groups)) setGroups(r.groups);
+      await loadLists();
+      refresh && refresh();
+      try { window.__DCP_REFRESH_ARTISTS__ && window.__DCP_REFRESH_ARTISTS__(); } catch { /* 面板不在场也没关系 */ }
+      if (okMsg) toast && toast(okMsg, 'ok');
+      return r;
+    } catch (e) { fail(e); return null; } finally { if (mounted.current) setGroupBusy(''); }
+  }, [api, fail, loadLists, refresh, toast]);
+
+  const createGroupFromCard = useCallback(async () => {
+    const n = newGroupName.trim();
+    if (!n) return;
+    const r = await groupOp('create', { name: n }, t('artists.groups.created') + '：' + n);
+    if (r) setNewGroupName('');
+  }, [groupOp, newGroupName, t]);
+
+  const addToGroup = useCallback(async (tag, name) => {
+    await groupOp('add', { tag, group: name }, t('artists.groups.added') + '：' + tag + ' → ' + name);
+    setPickFor('');
+    setMenuNewName('');
+  }, [groupOp, t]);
+
+  const createAndAdd = useCallback(async (tag) => {
+    const n = menuNewName.trim();
+    if (!n) return;
+    const r = await groupOp('create', { name: n }, t('artists.groups.created') + '：' + n);
+    if (r) await addToGroup(tag, n);
+  }, [addToGroup, groupOp, menuNewName, t]);
+
+  const removeMember = useCallback(async (tag, name) => {
+    await groupOp('remove', { tag, group: name });
+  }, [groupOp]);
+
+  const deleteGroup = useCallback(async (name) => {
+    if (groupArm !== name) { setGroupArm(name); return; }
+    setGroupArm('');
+    await groupOp('delete', { name }, t('artists.groups.deleted') + '：' + name);
+  }, [groupArm, groupOp, t]);
+
+  /** 加组菜单：先列已存在的组（点一下即加入），也可以就地新建一个组并加入。 */
+  const groupPickMenu = (tag) => h('div', { className: 'group-menu' },
+    groups.length
+      ? h('div', { className: 'chip-wrap' }, groups.map((g) => {
+        const already = (g.items || []).indexOf(tag) >= 0;
+        return h('span', { className: 'chip' + (already ? ' blocked' : ''), key: 'gm' + g.name },
+          h('button', {
+            className: 'chip-name', disabled: !!groupBusy,
+            title: already ? t('artists.groups.removeHint') : t('artists.groups.addHint'),
+            onClick: () => (already ? removeMember(tag, g.name) : addToGroup(tag, g.name)),
+          }, (already ? '✓ ' : '＋ ') + g.name + '（' + (g.items || []).length + '）'));
+      }))
+      : h('div', { className: 'muted' }, t('artists.groups.none')),
+    h('div', { className: 'row tight' },
+      h('input', {
+        className: 'input', value: menuNewName,
+        disabled: groups.length >= GROUP_MAX,
+        placeholder: groups.length >= GROUP_MAX ? t('artists.groups.full') : t('artists.groups.newPlaceholder'),
+        onChange: (e) => setMenuNewName(e.target.value),
+        onKeyDown: (e) => { if (e.key === 'Enter') { e.preventDefault(); createAndAdd(tag); } },
+      }),
+      h('button', {
+        className: 'btn tiny', disabled: !menuNewName.trim() || groups.length >= GROUP_MAX || !!groupBusy,
+        onClick: () => createAndAdd(tag),
+      }, t('artists.groups.createAndAdd')),
+      h('button', { className: 'btn tiny', onClick: () => { setPickFor(''); setMenuNewName(''); } }, t('common.close'))));
 
   /** 打开本机图片文件夹（走本程序的 /app/open-folder）。 */
   const openFolder = useCallback(async () => {
@@ -116,6 +201,21 @@ export default function ArtistsPage(props) {
       if (mounted.current) setWorks(r || { items: [], total: 0, artists: [] });
     } catch (e) { fail(e); } finally { if (mounted.current) setWorksBusy(false); }
   }, [api, fail, worksQuery]);
+
+  /**
+   * v1.2.0：删除一张本机作品（web UI 与磁盘一起删）。后端只允许删 output 目录内的图片；
+   * 删完重新拉一次列表，被删空的模型子目录由后端顺手收掉。
+   */
+  const deleteWork = useCallback(async (it) => {
+    setDelArm('');
+    setErr('');
+    try {
+      const r = await api('/app/output/delete', { method: 'POST', body: { name: it.name, sub: it.sub || '' } });
+      if (!r || !r.ok) throw new Error((r && r.error) || t('toast.failed'));
+      toast && toast(t('artists.works.deleted') + '：' + it.name, 'ok');
+      await loadWorks();
+    } catch (e) { fail(e); }
+  }, [api, fail, loadWorks, t, toast]);
 
   const importFromBrowser = useCallback(async () => {    const read = readBrowserFavs();
     if (!read.ok) { toast && toast(t('toast.failed'), 'error'); return; }
@@ -187,20 +287,28 @@ export default function ArtistsPage(props) {
         const tag = it && it.tag ? it.tag : '';
         const fav = isFav(tag);
         const blocked = isBlocked(tag) || !!(it && it.blacklisted);
-        return h('div', { className: 'hit-row', key: 'h' + i },
-          h('span', { className: 'hit-name' }, tag),
-          blocked ? h('span', { className: 'chip blocked' }, t('artists.blacklisted')) : null,
-          h('button', {
-            className: fav ? 'star' : 'star off',
-            disabled: busy === 'fav:' + tag || busy === 'blacklist:' + tag,
-            title: t(fav ? 'artists.unfav' : 'artists.fav'),
-            onClick: () => toggle(tag, 'fav'),
-          }, t(fav ? 'artists.unfav' : 'artists.fav')),
-          h('button', {
-            className: 'btn tiny',
-            disabled: busy === 'fav:' + tag || busy === 'blacklist:' + tag,
-            onClick: () => toggle(tag, 'blacklist'),
-          }, t(blocked ? 'artists.blacklist.remove' : 'artists.blacklist.add')));
+        return h('div', { key: 'h' + i },
+          h('div', { className: 'hit-row' },
+            h('span', { className: 'hit-name' }, tag),
+            blocked ? h('span', { className: 'chip blocked' }, t('artists.blacklisted')) : null,
+            h('button', {
+              className: fav ? 'star' : 'star off',
+              disabled: busy === 'fav:' + tag || busy === 'blacklist:' + tag,
+              title: t(fav ? 'artists.unfav' : 'artists.fav'),
+              onClick: () => toggle(tag, 'fav'),
+            }, t(fav ? 'artists.unfav' : 'artists.fav')),
+            // v1.2.0：把画师加入分组 —— 点开列出已存在的组，选一个即加入（同一行的按钮）
+            h('button', {
+              className: 'btn tiny' + (pickFor === tag ? ' primary' : ''),
+              title: t('artists.groups.addHint'),
+              onClick: () => setPickFor(pickFor === tag ? '' : tag),
+            }, t('artists.groups.add') + (groupNamesOf(tag).length ? '（' + groupNamesOf(tag).length + '）' : '')),
+            h('button', {
+              className: 'btn tiny',
+              disabled: busy === 'fav:' + tag || busy === 'blacklist:' + tag,
+              onClick: () => toggle(tag, 'blacklist'),
+            }, t(blocked ? 'artists.blacklist.remove' : 'artists.blacklist.add'))),
+          pickFor === tag ? groupPickMenu(tag) : null);
       }))
       : null,
     h('div', { className: 'hint' }, t('artists.manage.title') + ' · ' + String(listCount)));
@@ -259,14 +367,58 @@ export default function ArtistsPage(props) {
                 title: t(isFav(it.artist) ? 'artists.unfav' : 'artists.fav') + ' ' + it.artist,
                 onClick: () => toggle(it.artist, 'fav'),
               }, t(isFav(it.artist) ? 'artists.unfav' : 'artists.fav'))
-              : h('span', { className: 'muted' }, t('artists.works.noArtist'))))))
+              : h('span', { className: 'muted' }, t('artists.works.noArtist')),
+            // v1.2.0：删除这张作品（两步确认；删除后 web UI 与图片文件夹里都没有它）
+            h('button', {
+              className: delArm === it.url ? 'star' : 'star off',
+              title: t('artists.works.deleteHint'),
+              onClick: () => { if (delArm === it.url) deleteWork(it); else setDelArm(it.url); },
+            }, delArm === it.url ? t('artists.works.deleteConfirm') : '🗑')))))
         : h('div', { className: 'hint' }, t('artists.works.empty')))
       : null,
     works && works.dir ? h('div', { className: 'muted mono', style: { fontSize: 10 } }, t('artists.works.dir') + ': ' + works.dir) : null);
 
+  // ── v1.2.0：画师分组（建组 / 删组 / 看成员）──────────────────
+  // 用户要求：最多 50 个分组；加入分组的入口与"收藏"在同一行，点开列出已存在的组再选一个。
+  const groupsCard = h('div', { className: 'card' },
+    h('div', { className: 'row' },
+      h('div', { className: 'card-title' }, t('artists.groups')),
+      h('span', { className: 'sp' }),
+      h('span', { className: 'count' }, String(groups.length) + ' / ' + String(GROUP_MAX))),
+    h('div', { className: 'hint' }, t('artists.groups.hint')),
+    h('div', { className: 'search-row' },
+      h('input', {
+        className: 'input', value: newGroupName, disabled: groups.length >= GROUP_MAX,
+        placeholder: groups.length >= GROUP_MAX ? t('artists.groups.full') : t('artists.groups.placeholder'),
+        onChange: (e) => setNewGroupName(e.target.value),
+        onKeyDown: (e) => { if (e.key === 'Enter') { e.preventDefault(); createGroupFromCard(); } },
+      }),
+      h('button', {
+        className: 'btn',
+        disabled: !newGroupName.trim() || groups.length >= GROUP_MAX || !!groupBusy,
+        onClick: createGroupFromCard,
+      }, t('artists.groups.create'))),
+    groups.length >= GROUP_MAX ? h('div', { className: 'hint' }, t('artists.groups.full')) : null,
+    groups.length
+      ? h('div', { className: 'list list-scroll' }, groups.map((g) => {
+        const members = g.items || [];
+        return h('div', { className: 'hit-row', key: 'g' + g.name },
+          h('span', { className: 'hit-name', title: members.join(', ') },
+            g.name + '（' + members.length + ' ' + t('artists.groups.count') + '）'),
+          h('span', { className: 'muted', style: { maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } },
+            members.slice(0, 4).join('、') + (members.length > 4 ? ' …' : '')),
+          h('button', {
+            className: groupArm === g.name ? 'star' : 'btn tiny',
+            disabled: !!groupBusy,
+            title: t('artists.groups.delHint'),
+            onClick: () => deleteGroup(g.name),
+          }, groupArm === g.name ? t('artists.groups.delConfirm') : t('artists.groups.del')));
+      }))
+      : h('div', { className: 'muted' }, t('artists.groups.none')));
+
   return h('div', { className: 'page' },
     h('h1', { className: 'page-title' }, t('artists.title')),
     err ? h('div', { className: 'error' }, err) : null,
-    h('div', { className: 'artist-cols' }, favCard, blackCard, searchCard, importCard),
+    h('div', { className: 'artist-cols' }, favCard, blackCard, groupsCard, searchCard, importCard),
     worksCard);
 }

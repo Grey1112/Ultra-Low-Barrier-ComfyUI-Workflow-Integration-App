@@ -106,6 +106,21 @@ function ensureLanToken() {
   return load().listen.token;
 }
 
+/**
+ * v1.2.0：设置下发时把 API Key 换成布尔 `hasKey`。
+ * 页面拿不到明文，就不可能"回传空值把 Key 抹掉"（config.save 同时把空值当"不改"，双重保险）；
+ * 顺带也把 Key 从不必要的响应体里去掉。真正要用 Key 的接口（测试连接 / 对话 / 拉模型清单）
+ * 都在服务端读配置，不依赖页面回传。
+ */
+function redactSettings(s) {
+  const out = JSON.parse(JSON.stringify(s));
+  if (out.llm && out.llm.api) {
+    out.llm.api.hasKey = !!out.llm.api.apiKey;
+    out.llm.api.apiKey = '';
+  }
+  return out;
+}
+
 // ── 路由 ─────────────────────────────────────────────────
 
 async function handleApp(req, res, url, body) {
@@ -130,7 +145,7 @@ async function handleApp(req, res, url, body) {
         data: paths.data,
         output: works.outputDir(),
       },
-      comfy: { mode: s.comfy.mode, dir: status.dir, port: status.port, online: status.online, running: status.running, pid: status.pid, layout: status.layout, modelsDir: status.modelsDir },
+      comfy: { mode: s.comfy.mode, dir: status.dir, port: status.port, online: status.online, running: status.running, pid: status.pid, layout: status.layout, modelsDir: status.modelsDir, outputDir: works.outputDir(), outputSource: works.outputInfo().source, outputOverride: works.outputOverride() },
       // v1.1.0（修复 B6）：必须下发 provider 与 api —— 前端要按推理来源判定"能不能发消息"，
       // 只给 runtime 的话外接 API 模式（默认来源）永远被判成"本地 LLM 未就绪"。
       llm: { runtime: lstatus.runtime, model: lstatus.model, modelCount: lstatus.models.length, server: lstatus.server, contextMessages: s.llm.contextMessages, sendContext: s.llm.sendContext === true, keepMessages: s.llm.keepMessages, reasoning: s.llm.api.reasoning, provider: lstatus.provider, api: lstatus.api },
@@ -145,11 +160,11 @@ async function handleApp(req, res, url, body) {
   }
 
   if (p === '/app/settings') {
-    if (req.method === 'GET') return sendJson(res, 200, s);
+    if (req.method === 'GET') return sendJson(res, 200, redactSettings(s));
     if (req.method === 'PUT' || req.method === 'POST') {
       const next = save(body || {});
       if (next.listen.lan) ensureLanToken();
-      return sendJson(res, 200, load());
+      return sendJson(res, 200, redactSettings(load()));
     }
     return sendJson(res, 405, { error: 'method not allowed' });
   }
@@ -172,9 +187,38 @@ async function handleApp(req, res, url, body) {
   }
   if (p === '/app/comfy/stop' && req.method === 'POST') return sendJson(res, 200, await comfy.stop());
   if (p === '/app/comfy/log') return sendJson(res, 200, comfy.logTail(Number(url.searchParams.get('tail') || 300)));
+  // v1.2.0：输出目录（图片文件夹）当前解析结果 —— 界面据此显示"图会落在哪"，并可手动覆盖。
+  if (p === '/app/comfy/outputdir') {
+    const info = works.outputInfo(true);
+    let count = 0;
+    if (fsx.isDir(info.dir)) {
+      try { count = works.scanImages(info.dir).length; } catch { count = 0; }
+    }
+    return sendJson(res, 200, {
+      dir: info.dir, source: info.source, exists: fsx.isDir(info.dir), count,
+      override: info.override, candidates: info.candidates,
+    });
+  }
 
   // ── 画师数据 ──
   if (p === '/app/artists/lists') return sendJson(res, 200, store.readArtists());
+  // v1.2.0：自定义分组（最多 store.MAX_GROUPS 组；分组与收藏/黑名单不互斥）
+  if (p === '/app/artists/groups') {
+    return sendJson(res, 200, { groups: store.readArtists().groups, max: store.MAX_GROUPS });
+  }
+  if (p.startsWith('/app/artists/groups/') && req.method === 'POST') {
+    const action = p.slice('/app/artists/groups/'.length);
+    try {
+      if (action === 'create') return sendJson(res, 200, store.createGroup(body.name));
+      if (action === 'rename') return sendJson(res, 200, store.renameGroup(body.from, body.to));
+      if (action === 'delete') return sendJson(res, 200, store.deleteGroup(body.name));
+      if (action === 'add') return sendJson(res, 200, store.addToGroup(body.tag, body.group));
+      if (action === 'remove') return sendJson(res, 200, store.removeFromGroup(body.tag, body.group));
+      return sendJson(res, 404, { error: '未知的分组操作：' + action });
+    } catch (e) {
+      return sendJson(res, 400, { error: e.message });
+    }
+  }
   if (p === '/app/artists/favs' && (req.method === 'PUT' || req.method === 'POST')) {
     const cur = store.readArtists();
     return sendJson(res, 200, store.writeArtists({ ...cur, favs: body.items || [] }));
@@ -230,6 +274,13 @@ async function handleApp(req, res, url, body) {
   // 打开本机文件夹（图片 / 日志 / 模型）
   if (p === '/app/open-folder' && req.method === 'POST') {
     return sendJson(res, 200, works.openFolder(String(body.which || 'output')));
+  }
+  // v1.2.0：删除一张本机作品（面板「删除」/ 画师页「本机作品」都用它）。
+  // 只允许 output 目录内的图片文件；删完若模型子目录空了就顺手收掉。
+  if (p === '/app/output/delete' && req.method === 'POST') {
+    const r = works.removeImage(body.name, body.sub);
+    log.info(`删除作品请求：${String(body.sub || '')}/${String(body.name || '')} → ${r.ok ? '成功' : '失败(' + r.error + ')'}`);
+    return sendJson(res, r.ok ? 200 : 404, r);
   }
 
   // ── 本地 LLM ──

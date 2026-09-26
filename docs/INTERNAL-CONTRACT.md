@@ -1,4 +1,4 @@
-# 内部接口契约（comfy-panel-standalone v1.1.0）
+# 内部接口契约（comfy-panel-standalone v1.2.0）
 
 > 本文件是前端与后端的冻结契约。改动必须同步更新本文件。
 > 脱敏要求：本文件与全部交付物**不得出现任何真实机器路径**（示例一律用占位符）。
@@ -24,6 +24,7 @@
   "comfy": {
     "mode": "embedded",              // embedded | external
     "dir": "",                       // 外接模式的 ComfyUI 目录（绝对路径；仅存在 data/ 内）
+    "outputDir": "",                 // v1.2.0：图片文件夹（输出目录）可选覆盖；空 = 自动判定（见 §4）
     "port": 8188,
     "autoStart": false,
     "extraArgs": []
@@ -41,7 +42,11 @@
     "defaultModel": "",              // models/llm 下的文件名
     "port": 8199,
     "ctxSize": 8192,
-    "gpuLayers": 99
+    "gpuLayers": 99,
+    "api": {
+      "apiKey": ""                   // v1.2.0：**只写**字段。下发时一律替换为 "" 并附 hasKey；
+                                     // 保存时若传空串 = "不改"（保留已存值），清空须显式 clearKey:true
+    }
   }
 }
 ```
@@ -92,6 +97,7 @@ export default function SettingsPage({ api, t, state, refresh, toast }) { /* ...
 | POST | `/app/comfy/stop` | `{online:false, stopped:true|false, error?}` |
 | GET | `/app/comfy/status` | `{online, running, pid, dir, mode, port, candidates:[...]}` |
 | GET | `/app/comfy/log?tail=300` | `{path, lines:[...]}` |
+| GET | `/app/comfy/outputdir` | **v1.2.0**：图片文件夹（输出目录）当前解析结果 `{dir, source, exists, count, override, candidates:[...]}`。`source` ∈ `setting` / `running:launched-by-app` / `running:running-process` / `layout` / `fallback`；`count` = 该目录内图片数（递归） |
 
 ### 画师数据（服务端持久化）
 | 方法 | 路径 | 说明 |
@@ -102,6 +108,15 @@ export default function SettingsPage({ api, t, state, refresh, toast }) { /* ...
 | PUT | `/app/artists/blacklist` | body `{items:[...]}` |
 | POST | `/app/artists/import` | body `{items:[...]}` 合并导入（用于 localStorage `dcp-artist-favs` 一次性迁移）→ `{favs, imported}` |
 | GET | `/app/artists/search?q=&source=all\|top\|favs&limit=50` | `{items:[{tag, blacklisted:bool}], total}` |
+
+| GET | `/app/artists/groups` | **v1.2.0**：`{groups:[{name, items:[tag]}], max:50}`（`/app/artists/lists` 也带 `groups`） |
+| POST | `/app/artists/groups/create` | body `{name}` → `{groups, result:"created", name}`；重名或超过 50 组返回 400 |
+| POST | `/app/artists/groups/rename` | body `{from, to}` |
+| POST | `/app/artists/groups/delete` | body `{name}`（只删分组，不动画师与收藏/黑名单） |
+| POST | `/app/artists/groups/add` | body `{tag, group}` → 画师入组（不重复；**与收藏/黑名单不互斥**） |
+| POST | `/app/artists/groups/remove` | body `{tag, group}` → 从组内移出 |
+| POST | `/app/output/delete` | **v1.2.0**：body `{name, sub}` → 删除 output 目录内的一张图，返回 `{ok:true, file, dir, bytes, removedDirs}`；只允许 output 内的图片（越界/非图片 404），被删空的模型子目录会被移除 |
+| GET | `/app/output/file?name=&sub=` | 直读 output 目录内的图片（ComfyUI 离线也能看本机作品） |
 
 ### 本地 LLM（F2）
 | 方法 | 路径 | 说明 |

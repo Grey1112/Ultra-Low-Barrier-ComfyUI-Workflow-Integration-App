@@ -10,6 +10,114 @@ const { pipeline } = require('node:stream/promises');
 const fsx = require('./util/fsx');
 const log = require('./util/log');
 
+// ── v1.2.0：下载前"逐个源测速 → 选最快的那个稳定使用" ────────────────
+// 用户要求：安装过程中每个源都尝试一次，测出下载速度最高的源后稳定用它（别在慢源上反复切换）。
+// 与原有三条换源规则的关系：测速只是**决定起始顺序**；下载中途若发生停滞/变慢，仍按原规则换到
+// 下一个候选（测速排名已把备选也排好序），所以"能下完"这件事没有被削弱。
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) comfy-panel-standalone/1.2';
+const PROBE_BYTES = 1 << 20;              // 每个源探 1 MiB
+const PROBE_CAP_MS = 6000;                // 或最多 6 s（谁先到算谁）
+const PROBE_MIN_FILE = 8 << 20;           // 文件 < 8 MiB 就不值得先探（探测开销相对太大）
+const PREFER_TTL_MS = 10 * 60 * 1000;     // 同一"来源家族"内 10 分钟内沿用上次测得的最快源
+const preferByFamily = new Map();         // familyKey → { url, via, mbps, at }
+
+/** 来源家族：同主机 + 同目录前缀（同一批镜像/同一仓库的不同文件算一家，测一次就够）。 */
+function familyKeyOf(url) {
+  try {
+    const u = new URL(url);
+    return u.host + u.pathname.replace(/\/[^/]*$/, '');
+  } catch { return String(url); }
+}
+
+function preferredFor(key) {
+  const p = preferByFamily.get(key);
+  if (!p) return null;
+  if (Date.now() - p.at > PREFER_TTL_MS) { preferByFamily.delete(key); return null; }
+  return p;
+}
+
+/** 探一个候选源：读满 PROBE_BYTES 或到 PROBE_CAP_MS 就收手（不落盘），返回实测 MB/s。 */
+async function probeSpeed(url) {
+  const t0 = Date.now();
+  const ctrl = new AbortController();
+  let got = 0;
+  let firstByteMs = 0;
+  const headers = { 'user-agent': UA, accept: '*/*', Range: `bytes=0-${PROBE_BYTES - 1}` };
+  try {
+    const connectTimer = setTimeout(() => ctrl.abort(new Error('连接超时')), 8000);
+    let res;
+    try { res = await fetch(url, { headers, redirect: 'follow', signal: ctrl.signal }); }
+    finally { clearTimeout(connectTimer); }
+    if (!res.ok && res.status !== 206) {
+      return { ok: false, status: res.status, error: 'HTTP ' + res.status, got, mbps: 0, firstByteMs: Date.now() - t0 };
+    }
+    firstByteMs = Date.now() - t0;
+    const reader = res.body.getReader();
+    for (;;) {
+      const { done, value } = await Promise.race([
+        reader.read(),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('停滞')), PROBE_CAP_MS)),
+      ]);
+      if (done) break;
+      got += value ? value.length : 0;
+      if (got >= PROBE_BYTES || Date.now() - t0 > PROBE_CAP_MS) { try { await reader.cancel(); } catch { /* 忽略 */ } break; }
+    }
+    const sec = Math.max(0.001, (Date.now() - t0) / 1000);
+    return { ok: got > 0, status: res.status, got, sec, firstByteMs, mbps: (got / 1e6) / sec };
+  } catch (e) {
+    const sec = Math.max(0.001, (Date.now() - t0) / 1000);
+    const reason = (ctrl.signal && ctrl.signal.reason && ctrl.signal.reason.message) || (e && e.message) || String(e);
+    return { ok: false, error: reason, got, sec, firstByteMs, mbps: got ? (got / 1e6) / sec : 0 };
+  }
+}
+
+/**
+ * 把候选源按实测速度就地重排，并记住这个"来源家族"里最快的是谁。
+ * 返回 true 表示真的测过（顺序被改过）。跳过的情况都会明确说明原因（不静默）。
+ */
+async function pickFastest(candidates, { name, say, expectBytes, disabled } = {}) {
+  if (disabled || !Array.isArray(candidates) || candidates.length < 2) return false;
+  const log2 = typeof say === 'function' ? say : (m, l) => log.info(m);
+  const key = familyKeyOf(candidates[0].url);
+  const remembered = preferredFor(key);
+  if (remembered) {
+    // 按"来源家族"匹配（同一主机的同一目录），所以下一个文件名不同也能命中
+    const i = candidates.findIndex((c) => familyKeyOf(c.url) === remembered.winnerFamily);
+    if (i > 0) {
+      const [hit] = candidates.splice(i, 1);
+      candidates.unshift(hit);
+      log2(`${name}：沿用上次实测最快的来源 ${hit.via || hit.source}（${remembered.mbps.toFixed(2)} MB/s，10 分钟内不重复测速）`);
+      return false;
+    }
+  }
+  if (expectBytes && expectBytes < PROBE_MIN_FILE) {
+    log2(`${name}：文件较小（${fsx.fmtBytes(expectBytes)}），跳过逐源测速，按候选顺序下载`);
+    return false;
+  }
+  log2(`${name}：先给 ${candidates.length} 个候选源各测一段（约 ${PROBE_BYTES / 1048576} MiB / 最多 ${PROBE_CAP_MS / 1000} s），再按实测速度选最快的稳定使用…`);
+  const rows = [];
+  for (const c of candidates) {
+    const r = await probeSpeed(c.url);
+    rows.push({ cand: c, r });
+    const label = c.source === 'official' ? '官方源' : (c.via || c.source);
+    log2(`  测速 ${label}：` + (r.ok
+      ? `${r.mbps.toFixed(2)} MB/s（首字节 ${r.firstByteMs} ms）`
+      : `失败（${r.error || ('HTTP ' + r.status)}）`), r.ok ? 'info' : 'warn');
+  }
+  const good = rows.filter((x) => x.r.ok && x.r.mbps > 0).sort((a, b) => b.r.mbps - a.r.mbps);
+  if (!good.length) {
+    log2(`${name}：所有候选源测速都没拿到数据，回落到原有换源规则逐个重试`, 'warn');
+    return false;
+  }
+  const order = good.map((x) => x.cand).concat(rows.filter((x) => !(x.r.ok && x.r.mbps > 0)).map((x) => x.cand));
+  candidates.length = 0;
+  for (const c of order) candidates.push(c);
+  const best = order[0];
+  preferByFamily.set(key, { winnerFamily: familyKeyOf(best.url), via: best.via, source: best.source, mbps: good[0].r.mbps, at: Date.now() });
+  log2(`${name}：选中最快来源 ${best.source === 'official' ? '官方源' : (best.via || best.source)}（实测 ${good[0].r.mbps.toFixed(2)} MB/s）；本轮后续文件也优先用它`, 'ok');
+  return true;
+}
+
 /** 判断 URL 属于哪个上游，并据此生成候选来源列表（官方源在前，镜像在后）。
  *
  * 镜像本身是**数据**（settings.download.hfMirrors / githubProxies / nodeMirrors / extraMirrors），
@@ -251,6 +359,8 @@ async function download(o) {
   if (job) {
     job.emit({ phase, level: 'info', message: `${name} 候选来源 ${candidates.length} 个：` + candidates.map((c) => (c.source === 'official' ? '官方源' : c.via)).join(' → ') });
   }
+  // v1.2.0：先逐源测一段，把最快的排到最前（并在 10 分钟内记住它）；o.noProbe 可显式关掉。
+  await pickFastest(candidates, { name, say, expectBytes, disabled: o.noProbe === true });
   const timeoutMs = settings.download?.officialTimeoutMs || 10000;
   const startDeadlineMs = settings.download?.startDeadlineMs || 10000;
   const stallDeadlineMs = settings.download?.stallDeadlineMs || 15000;
@@ -571,4 +681,4 @@ async function probe(url, settings, timeoutMs) {
   return results;
 }
 
-module.exports = { download, buildCandidates, probe, speedTest, normalizeDownloadUrl };
+module.exports = { download, buildCandidates, probe, speedTest, normalizeDownloadUrl, probeSpeed, pickFastest, preferByFamily };

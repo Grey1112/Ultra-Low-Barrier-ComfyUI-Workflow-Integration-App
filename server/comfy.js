@@ -1,7 +1,7 @@
 // ComfyUI 侧：安装探测、进程管理、HTTP 反代、WebSocket 裸 TCP 中继、画师清单只读。
 //
 // 与插件版宿主半的关系：反代与 WS 中继的逻辑**原样继承**（含"不改写则不放过 origin 围栏"
-// 的实测结论），只是把 DSH 的 connection.requestRejection 鉴权换成了本地回环 + 可选 LAN 令牌。
+// 的实测结论），只是把插件宿主的 connection.requestRejection 鉴权换成了本地回环 + 可选 LAN 令牌。
 'use strict';
 
 const fs = require('node:fs');
@@ -13,7 +13,7 @@ const { paths, load, comfyDir } = require('./config');
 const fsx = require('./util/fsx');
 const log = require('./util/log');
 
-const state = { pid: null, startedAt: null, lastError: null, spawnCommand: null };
+const state = { pid: null, startedAt: null, lastError: null, spawnCommand: null, codeDir: null };
 
 // ── 探测 ─────────────────────────────────────────────────
 
@@ -124,6 +124,7 @@ async function launch() {
     state.startedAt = Date.now();
     state.lastError = null;
     state.spawnCommand = [layout.python, ...args].join(' ');
+    state.codeDir = path.dirname(layout.mainPy);   // 记住入口目录：输出目录就挂在它下面（见 outputDirInfo）
     log.info(`已拉起 ComfyUI：pid=${child.pid} cwd=${path.dirname(layout.mainPy)} port=${cur.port}`);
   } catch (e) {
     state.lastError = e.message;
@@ -160,6 +161,68 @@ function pidListeningOn(port) {
     { encoding: 'utf8' });
   const pid = Number.parseInt((r.stdout || '').trim(), 10);
   return Number.isFinite(pid) && pid > 0 ? pid : null;
+}
+
+/**
+ * 读取某个进程的命令行（仅 Windows；用 PowerShell CIM，实测 ~150 ms）。
+ * 为什么要它：面板/「图片文件夹」必须指向**实际在跑的那个 ComfyUI** 的输出目录 ——
+ * 用户经常是自己在别处（例如另一块盘上的自建 ComfyUI）起 ComfyUI，而本程序按内嵌布局去找
+ * `<项目>/runtime/comfyui/ComfyUI/output`，于是生成的照片"根本不出现在图片文件夹里"。
+ */
+function cmdlineOf(pid) {
+  if (process.platform !== 'win32' || !pid) return '';
+  const n = Number(pid);
+  if (!Number.isFinite(n) || n <= 0) return '';
+  try {
+    const r = spawnSync('powershell', ['-NoProfile', '-Command',
+      `(Get-CimInstance Win32_Process -Filter "ProcessId=${n}" -ErrorAction SilentlyContinue).CommandLine`],
+      { encoding: 'utf8', timeout: 8000 });
+    return String(r.stdout || '').trim();
+  } catch { return ''; }
+}
+
+/** 从命令行里取出 ComfyUI 入口 main.py 所在目录（venv 与便携两种布局都能认）。 */
+function codeDirFromCmdline(cmd) {
+  const s = String(cmd || '');
+  const m = s.match(/"([^"]*main\.py)"|(\S+main\.py)/i);
+  const p = m ? (m[1] || m[2]) : '';
+  if (!p) return null;
+  try { return path.dirname(path.resolve(p)); } catch { return null; }
+}
+
+let codeDirCache = { at: 0, port: 0, dir: null };
+
+/** 监听该端口的可能是**别人**起的 ComfyUI，用它的命令行反推代码目录（缓存 60 s）。 */
+function codeDirOfRunning(port) {
+  const now = Date.now();
+  if (codeDirCache.port === port && now - codeDirCache.at < 60000) return codeDirCache.dir;
+  const pid = pidListeningOn(port);
+  const dir = pid ? codeDirFromCmdline(cmdlineOf(pid)) : null;
+  codeDirCache = { at: now, port, dir };
+  return dir;
+}
+
+/**
+ * 输出目录情报：本程序拉起的实例优先（我们确知它的入口目录），其次问"端口上那个进程"。
+ * 返回 { dir, source }；拿不到就是 null，让调用方回落到按设置推导的候选目录。
+ */
+function outputDirInfo(port) {
+  const cur = port === undefined ? current() : { port: Number(port) || current().port };
+  const tried = [];
+  if (state.codeDir) tried.push({ dir: state.codeDir, source: 'launched-by-app' });
+  const running = codeDirOfRunning(cur.port);
+  if (running) tried.push({ dir: running, source: 'running-process' });
+  for (const t of tried) {
+    for (const c of [path.join(t.dir, 'output'), path.join(t.dir, 'ComfyUI', 'output')]) {
+      if (fsx.isDir(c)) return { dir: c, source: t.source, codeDir: t.dir };
+    }
+  }
+  // 有代码目录但 output 还没建出来（ComfyUI 首次启动前）：也认，免得又指回内嵌空目录
+  if (tried.length) {
+    const t = tried[0];
+    return { dir: path.join(t.dir, 'output'), source: t.source + '(expected)', codeDir: t.dir };
+  }
+  return null;
 }
 
 /** 一键停止：优先停我们拉起的进程；否则停监听该端口的进程（同机回环）。 */
@@ -321,5 +384,7 @@ module.exports = {
   detectLayout, current, probe, status, launch, stop, logTail,
   readArtists, resetArtistsCache, artistDirs,
   proxy, relaySocket,
+  // v1.2.0：输出目录定位（图片文件夹 / 本机作品 / 删除都以此为准）
+  outputDirInfo, codeDirOfRunning, cmdlineOf, codeDirFromCmdline, pidListeningOn,
   state,
 };

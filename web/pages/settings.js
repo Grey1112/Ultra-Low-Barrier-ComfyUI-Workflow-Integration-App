@@ -206,6 +206,8 @@ export default function SettingsPage(props) {
   }
 
   const proxyText = Array.isArray(download.githubProxies) ? download.githubProxies.join('\n') : (download.githubProxiesText || '');
+  // v1.2.0：服务端只回 hasKey（不回显明文 Key）；本页据此显示"已配置/未配置"。
+  const keyStored = !!((s.llm && s.llm.api && s.llm.api.hasKey) || (settings && settings.llm && settings.llm.api && settings.llm.api.hasKey));
   // 令牌来源按优先级：① 本次保存的响应（唯一在"开启后当前页还没带令牌"时也拿得到的来源）；
   // ② /app/state（v1.1.0 起下发，供重新打开页面时读取）；③ 装载时的 /app/settings 副本。
   const lanToken = freshToken || (state && state.listen && state.listen.token) || (s.listen && s.listen.token) || '';
@@ -361,7 +363,30 @@ export default function SettingsPage(props) {
             h(Field, { label: t('settings.llm.apiBase'), hint: t('settings.llm.apiBase.hint') },
               h('input', { className: 'input', value: apiCfg.baseUrl || '', placeholder: 'https://api.deepseek.com', onChange: (e) => setApiCfg({ ...apiCfg, baseUrl: e.target.value }) })),
             h(Field, { label: t('settings.llm.apiKey'), hint: t('settings.llm.apiKey.hint') },
-              h('input', { className: 'input', type: 'password', value: apiCfg.apiKey || '', onChange: (e) => setApiCfg({ ...apiCfg, apiKey: e.target.value }) })),
+              h('input', {
+                className: 'input', type: 'password', value: apiCfg.apiKey || '',
+                placeholder: apiCfg.apiKey ? '' : (keyStored ? '••••••••' : 'sk-…'),
+                onChange: (e) => setApiCfg({ ...apiCfg, apiKey: e.target.value }),
+              }),
+              // v1.2.0：Key 改成"只写"字段 —— 服务端不再回显明文，页面留空保存也不会清掉它；
+              // 要清空必须显式点这里。这样"切一下思考挡位"再也不会要求重新输入 Key。
+              h('div', { className: 'row tight', style: { marginTop: 4 } },
+                h('span', { className: 'hint' }, apiCfg.apiKey
+                  ? t('settings.llm.apiKey.willSave')
+                  : (keyStored ? t('settings.llm.apiKey.storedHint') : t('settings.llm.apiKey.emptyHint'))),
+                h('span', { className: 'sp' }),
+                keyStored ? h('button', {
+                  className: 'btn tiny', title: t('settings.llm.apiKey.clearConfirm'),
+                  onClick: async () => {
+                    if (!window.confirm(t('settings.llm.apiKey.clearConfirm'))) return;
+                    try {
+                      await put('/app/settings', { llm: { api: { clearKey: true } } });
+                      setApiCfg((c) => ({ ...c, apiKey: '' }));
+                      await refresh();
+                      toast(t('settings.llm.apiKey.cleared'), 'ok');
+                    } catch (e) { toast(t('toast.failed') + '：' + e.message, 'error'); }
+                  },
+                }, t('settings.llm.apiKey.clear')) : null)),
             h('div', { className: 'row' },
               h(Field, { label: t('settings.llm.apiModel'), hint: apiModels.length ? t('settings.llm.apiModel.hint') : undefined },
                 apiModels.length

@@ -1,6 +1,6 @@
 // dsh-comfy-panel — client 半：ComfyUI 生图控制台浮动面板。
 // 注册在 shell.overlay（叠加层，additive，不替换任何产品 UI）。
-// 数据通路（全部经 DSH 鉴权，同源，见 host 半“隐私边界”）：
+// 数据通路（全部经同源鉴权，见 host 半“隐私边界”）：
 //   HTTP → /comfy-panel/api/*（host 半反代 ComfyUI，绕过 CORS，需 GUI 签名 cookie）
 //   进度 → 同源 ws://<GUI 主机>/comfy-panel/ws?clientId=...（host 半裸 TCP 反代到
 //          ComfyUI 的 /ws）。**不再**直连 127.0.0.1:8188/ws：ComfyUI 0.37 的
@@ -10,7 +10,7 @@
 //          围栏才过得去。
 //   预览 → 同一 WS 的二进制帧（PREVIEW_IMAGE_WITH_METADATA）：需先声明
 //          supports_preview_metadata 特性，并按任务传 extra_data.preview_method
-//   图片 → <img> 走 /comfy-panel/api/view（DSH 鉴权代理，不直连 8188）
+//   图片 → <img> 走 /comfy-panel/api/view（同源鉴权代理，不直连 8188）
 //
 // v0.4 改版要点（修真实崩图：模型 / VAE 潜空间通道数不匹配）：
 //   * 新增管线兼容性表（见 MODEL_FAMILIES / VAE_FAMILIES / PIPELINE_RULES）：模型下拉
@@ -96,7 +96,7 @@
 //   * client 半 api()：空响应体按 undefined 处理——ComfyUI 的 /free 与 /interrupt 成功时返回
 //     空体，旧实现无条件 r.json() 抛 "Unexpected end of JSON input"，把成功显示成失败
 //     （「释放显存」其实一直成功）；/interrupt 一并受益。
-//   * 鉴权可诊断性：DSH 每次重启都作废旧签名 cookie，页面停在旧 token 标签时 /comfy-panel/*
+//   * 鉴权可诊断性：插件宿主每次重启都作废旧签名 cookie，页面停在旧 token 标签时 /comfy-panel/*
 //     全返回 401，而 config 拉取与画师清单拉取的失败原本是静默的（模型下拉空、生成按钮置灰、
 //     点击无反应）。现在 401/403 显式提示「用启动日志里最新的带 token 地址重开页面」。
 //
@@ -141,7 +141,7 @@ window.__ModuleLoader__.load({
 
 		// v1.0.0（独立版）：构建标识。面板头部据此自证"页面加载的是哪一版"。
 		// 与插件版不同：独立版静态直接托管、**没有 ?rev= 快照机制**，改代码刷新即生效。
-		const BUILD_TAG = "v1.1.0";
+		const BUILD_TAG = "v1.2.0";
 
 		// 实时通道地址：永远走面板自己的来源（同源 relay），不直连 8188。
 		// 纯函数，便于 node 侧冒烟测试直接断言。
@@ -334,16 +334,29 @@ window.__ModuleLoader__.load({
 			return {
 				favs: Array.isArray(st.favs) ? st.favs.map(String) : [],
 				blacklist: Array.isArray(st.blacklist) ? st.blacklist.map(String) : [],
+				groups: Array.isArray(st.groups) ? st.groups : [],
 			};
 		};
 		const loadFavorites = () => artistStore().favs;
 		const loadBlacklist = () => artistStore().blacklist;
+		// v1.2.0：自定义分组（服务端 data/artists.json 的 groups；外壳把它放在 window.__DCP_ARTISTS__.groups）。
+		// 形状统一成 { name, items:[tag] }，顺手过滤空名字 —— 面板只读，增删都在「画师」页做。
+		const loadGroups = () => artistStore().groups
+			.map((g) => ({
+				name: String((g && g.name) || ""),
+				items: Array.isArray(g && g.items) ? g.items.map(String) : [],
+			}))
+			.filter((g) => g.name);
+		const groupByName = (name) => loadGroups().find((g) => g.name === name) || null;
 		// 乐观更新 + 交给外壳持久化（外壳提供 window.__DCP_SAVE_ARTISTS__，内部走服务端接口）。
 		const persistArtists = (next) => {
 			const cur = artistStore();
 			const merged = {
 				favs: [...new Set((next.favs ?? cur.favs).map(String).filter(Boolean))],
 				blacklist: [...new Set((next.blacklist ?? cur.blacklist).map(String).filter(Boolean))],
+				// v1.2.0：必须把分组一起带上 —— 面板一挂载就会 saveFavorites 一次，
+				// 旧写法会把 window.__DCP_ARTISTS__.groups 直接抹掉（面板"分组随机"因此恒为空）。
+				groups: Array.isArray(next.groups) ? next.groups : (Array.isArray(cur.groups) ? cur.groups : []),
 			};
 			if (typeof window !== "undefined") {
 				window.__DCP_ARTISTS__ = merged;
@@ -398,7 +411,7 @@ window.__ModuleLoader__.load({
 			if (!r.ok) {
 				let msg = "HTTP " + r.status;
 				try { msg = (await r.json()).error ?? msg; } catch {}
-				// v1.0.0（独立版）：鉴权不再来自 DSH 签名 cookie；本机回环直连时不会 401。
+				// v1.0.0（独立版）：鉴权不再来自宿主签名 cookie；本机回环直连时不会 401。
 				// 开启局域网监听后，请求需带令牌（?token= 或 X-DCP-Token）——仍然显式提示，不静默。
 				if (r.status === 401 || r.status === 403) {
 					throw new Error("鉴权失败（HTTP " + r.status + "）：局域网模式需要令牌，请用带 ?token= 的地址打开页面（附注：" + msg + "）");
@@ -1267,6 +1280,39 @@ window.__ModuleLoader__.load({
 				}
 			}
 
+			// v1.2.0：删除本机作品 —— web UI 与磁盘一起删（用户要求）。
+			// ① 后端只允许删 output 目录内的图片，删完若模型子目录空了会一并收掉；
+			// ② 再从本地图片列表移除，当前图被删时自动切到下一张；
+			// ③ 顺手清掉 ComfyUI 历史里那条（尽力而为），否则刷新后又冒出一个坏缩略图。
+			function imageSubOf(im) {
+				if (!im) return "";
+				if (typeof im.sub === "string" && im.sub) return im.sub;
+				const m = String(im.url || "").match(/[?&]subfolder=([^&]*)/);
+				return m ? decodeURIComponent(m[1]) : "";
+			}
+			async function doDeleteImage(im) {
+				if (!im || !im.name || running) return;
+				setDeleteArm(null);
+				try {
+					const r = await fetch("/app/output/delete", {
+						method: "POST",
+						headers: { "content-type": "application/json" },
+						body: JSON.stringify({ name: im.name, sub: imageSubOf(im) }),
+					});
+					const j = await r.json().catch(() => ({}));
+					if (!r.ok || !j.ok) throw new Error((j && j.error) || ("HTTP " + r.status));
+					if (im.promptId) {
+						api("/history", { method: "POST", body: JSON.stringify({ delete: [im.promptId] }) }).catch(() => {});
+					}
+					const remain = images.filter((x) => x.url !== im.url);
+					setImages(remain);
+					if (current === im.url) setCurrent(remain[0] ? remain[0].url : null);
+					flashNote("已删除：" + im.name + (j.removedDirs && j.removedDirs.length ? "（模型文件夹已空，一并移除）" : ""), 8000);
+				} catch (e) {
+					setError("删除失败：" + String(e.message ?? e));
+				}
+			}
+
 			async function refreshModels() {
 				if (running) { flashNote("生成中，暂不能刷新模型清单", 3000); return; }
 				if (!online) return;                        // 按钮同口径 disabled，这里再兜一层				// 其余守卫（在飞 no-op、只改被新清单拒绝的键、note、错误提示）全部在
@@ -1388,10 +1434,17 @@ window.__ModuleLoader__.load({
 			const [artistBlacklist, setArtistBlacklist] = useState(() => loadBlacklist()); // 黑名单（服务端持久化）
 			const [artistFavOnly, setArtistFavOnly] = useState(false);   // 指定模式：检索范围切为「仅收藏」
 			const [artistCustom, setArtistCustom] = useState("");        // 自定义画师输入原文（格式规范化后可用）
+			// v1.2.0：待确认删除的图片 URL（删除是两步点击确认 —— 不弹 window.confirm，
+			// 那样中文提示没法走 i18n；两次点击的文案都在 DOM 里，能被词典翻译）。
+			const [deleteArm, setDeleteArm] = useState(null);
+			// v1.2.0：画师分组（服务端 data/artists.json 的 groups）+ 分组模式选中的组
+			const [artistGroups, setArtistGroups] = useState(() => loadGroups());
+			const [artistGroupPick, setArtistGroupPick] = useState("");
 
 			// v1.0.0：画师数据以服务端为准；画师管理页改了数据会广播事件，这里同步回面板 state。
+			// v1.2.0：分组也一起同步（画师页新建/加组后，面板的「分组随机」下拉立刻可用）。
 			useEffect(() => {
-				const onChanged = () => { setArtistFavs(loadFavorites()); setArtistBlacklist(loadBlacklist()); };
+				const onChanged = () => { setArtistFavs(loadFavorites()); setArtistBlacklist(loadBlacklist()); setArtistGroups(loadGroups()); };
 				window.addEventListener("dcp-artists-changed", onChanged);
 				return () => window.removeEventListener("dcp-artists-changed", onChanged);
 			}, []);
@@ -1464,12 +1517,15 @@ window.__ModuleLoader__.load({
 						for (const img of entry.outputs[nid]?.images ?? []) {
 							if (img.type === "temp") continue;
 							found.push({
-								// 隐私：图片 <img> 也走 DSH 鉴权代理（同源、带签名 cookie），
+								// 隐私：图片 <img> 也走同源鉴权代理（同源、带签名 cookie），
 								// 不再直连未鉴权的 http://127.0.0.1:8188/view。
 								url: "/comfy-panel/api/view?filename=" + encodeURIComponent(img.filename)
 									+ "&subfolder=" + encodeURIComponent(img.subfolder ?? "")
 									+ "&type=" + encodeURIComponent(img.type ?? "output"),
 								name: img.filename,
+								// v1.2.0：删除本机作品要用 subfolder（模型子目录）与 promptId（清 ComfyUI 历史）
+								sub: img.subfolder ?? "",
+								promptId,
 								// v0.8：这张图生成时注入的画师 tag（预览「收藏该画师」用；历史回收的图没有）
 								artist: artistByPromptRef.current.get(promptId) ?? null,
 							});
@@ -1646,8 +1702,13 @@ window.__ModuleLoader__.load({
 				const defs = defaultsFor(pipeline, modelFile);
 				const stepsCommit = commitNum(steps, 1, 100, defs.steps, true);
 				const cfgCommit = commitNum(cfg, 0.1, 30, defs.cfg, false);
-				const modeLabel = { randomBig: "大随机（全部画师池）", randomSmall: "小随机（前 200 高频）", randomFav: "随机收藏", fixed: "指定画师" };
-				// v1.0.0（独立版）：resolveTag 在三档随机里**剔除黑名单**；指定模式直接放行
+				const modeLabel = { randomBig: "大随机（全部画师池）", randomSmall: "小随机（前 200 高频）", randomFav: "随机收藏", randomGroup: "分组随机", fixed: "指定画师" };
+				// v1.2.0：分组随机的池子 = 选中分组的成员（v1.0.0 起随机档一律剔除黑名单）
+				const groupPool = () => {
+					const g = groupByName(artistGroupPick) || artistGroups[0] || null;
+					return g ? withoutBlacklisted(g.items) : [];
+				};
+				// v1.0.0（独立版）：resolveTag 在随机档里**剔除黑名单**；指定模式直接放行
 				// artistFixed（它可能是清单内 tag，也可能是用户自定义的 @名字）。
 				const resolveTag = () => {
 					if (!animaLike || artistMode === "off") return null;
@@ -1656,12 +1717,17 @@ window.__ModuleLoader__.load({
 						const favPool = withoutBlacklisted(artistFavs);
 						return favPool.length ? pickRandomArtist(favPool) : null;
 					}
+					if (artistMode === "randomGroup") {
+						const pool = groupPool();
+						return pool.length ? pickRandomArtist(pool) : null;
+					}
 					const pool = artistList && !artistList.failed
 						? withoutBlacklisted(artistMode === "randomSmall" ? artistList.top : artistList.all)
 						: null;
 					return pool && pool.length ? pickRandomArtist(pool) : null;
 				};
 				const favPoolSize = withoutBlacklisted(artistFavs).length;
+				const groupPoolSize = groupPool().length;
 				if (!animaLike && artistMode !== "off") {
 					flashNote("画师风格仅对 Anima 系列模型有效：Qwen-Image 2.1 本次不注入画师标签，文件名按 noartist 记", 8000);
 				} else if ((artistMode === "randomBig" || artistMode === "randomSmall") && (!artistList || artistList.failed)) {
@@ -1670,6 +1736,10 @@ window.__ModuleLoader__.load({
 					flashNote(artistFavs.length
 						? "收藏里的画师都被拉黑了，本次不注入画师（可在画师页取消拉黑）"
 						: "收藏列表为空，本次不注入画师（可在搜索列表点 ★ 收藏）", 6000);
+				} else if (artistMode === "randomGroup" && !groupPoolSize) {
+					flashNote(artistGroups.length
+						? "分组「" + ((groupByName(artistGroupPick) || artistGroups[0] || {}).name || "") + "」里没有可用画师（空组或都被拉黑了），本次不注入画师"
+						: "还没有画师分组：到「画师」页新建分组并加入画师后，这里就能按组随机", 7000);
 				} else if (artistMode !== "off") {
 					const sampleTag = resolveTag();
 					flashNote((modeLabel[artistMode] ?? "画师") + (sampleTag ? "：" + sampleTag : "")
@@ -1787,6 +1857,8 @@ window.__ModuleLoader__.load({
 				return /^noartist$/i.test(part) ? null : "@" + part.replace(/_/g, " ");
 			};
 			const curArtist = curImage ? ((curImage.artist ?? null) || artistFromName(curImage)) : null;
+			// v1.2.0：删除确认态绑定的那张图（图片栏的「确认删除：<文件名>」按钮删的就是它）
+			const armedImage = deleteArm ? images.find((x) => x.url === deleteArm) || null : null;
 			const curArtistFaved = !!curArtist && artistFavs.includes(curArtist);
 			const curArtistBlocked = !!curArtist && artistBlackSet.has(curArtist);
 			// v1.0.0（独立版）：指定模式的检索范围可切为「仅收藏」（复用同一套前端过滤，只换池子）；
@@ -1796,6 +1868,9 @@ window.__ModuleLoader__.load({
 			const artistPool = artistFavOnly ? artistFavs : (artistList && !artistList.failed ? artistList.all : []);
 			const artistHits = (artistFavOnly || (artistList && !artistList.failed)) ? filterArtists(artistPool, artistQuery, artistFavOnly ? 300 : 50) : [];
 			const artistCustomTag = normalizeCustomArtist(artistCustom);
+			// v1.2.0：分组随机当前选中的组（没显式选就取第一个）+ 组内可用人数（已剔除黑名单）
+			const artistGroupNow = artistGroups.find((g) => g.name === artistGroupPick) || artistGroups[0] || null;
+			const artistGroupUsable = artistGroupNow ? withoutBlacklisted(artistGroupNow.items).length : 0;
 			const artistExact = (() => {
 				const q = artistQuery.replace(/\\/g, "").trim().toLowerCase();
 				if (!q) return null;
@@ -1876,11 +1951,27 @@ window.__ModuleLoader__.load({
 						running && !preview && !current && h("div", { className: "dcp-empty" }, online ? "等待首帧实时预览…" : "ComfyUI 离线"),
 					),
 					images.length > 1 && h("div", { className: "dcp-thumbs" },
-						images.map((im) => h("img", { key: im.url, src: im.url, className: "dcp-thumb" + (im.url === current ? " cur" : ""), title: im.name, onClick: () => setCurrent(im.url) }))),
+						images.map((im) => h("div", { key: im.url, className: "dcp-thumb-wrap" },
+							h("img", { src: im.url, className: "dcp-thumb" + (im.url === current ? " cur" : ""), title: im.name, onClick: () => setCurrent(im.url) }),
+							// v1.2.0：每张历史图都能删（两步确认：先点🗑，再点「确认」）
+							!running && h("button", {
+								className: "dcp-thumb-del" + (deleteArm === im.url ? " armed" : ""),
+								title: deleteArm === im.url ? "再点一次即删除（同时删掉磁盘上的文件）" : "删除这张图（web UI 与图片文件夹一起删）",
+								onClick: (e) => { e.stopPropagation(); if (deleteArm === im.url) doDeleteImage(im); else setDeleteArm(im.url); },
+							}, deleteArm === im.url ? "确认删除" : "🗑"))),
+					),
 					// v1.0.1：历史图片放大显示 + 一键跳到图片文件夹（用户要求）
+					// v1.2.0：删除当前图 —— 两步确认，并且**删的是被武装的那一张**（按钮上写明文件名）。
+					// 为什么不能删 curImage：面板每秒重渲染、收图时 current 会漂移，两次点击之间"当前图"
+					// 可能已经换成别的（实测就踩到：确认态跑到了缩略图上，正图的按钮又变回未确认）。
 					h("div", { className: "row tight", style: { marginTop: 4 } },
 						h("span", { className: "dcp-muted" }, "历史 " + images.length + " 张"),
 						h("span", { className: "sp" }),
+						(curImage || armedImage) && !running ? h("button", {
+							className: "dcp-btn ghost", style: { padding: "2px 8px", fontSize: 11 },
+							title: armedImage ? "再点一次即删除「" + armedImage.name + "」（web UI 与图片文件夹一起删）" : "删除当前这张图：web UI 与图片文件夹一起删（点两次确认）",
+							onClick: () => { if (armedImage) doDeleteImage(armedImage); else setDeleteArm(curImage.url); },
+						}, armedImage ? "⚠ 确认删除：" + armedImage.name : "🗑 删除当前图") : null,
 						h("button", {
 							className: "dcp-btn ghost", style: { padding: "2px 8px", fontSize: 11 },
 							title: "在资源管理器里打开本机 output 目录（成图都写在这里）",
@@ -2004,8 +2095,29 @@ window.__ModuleLoader__.load({
 							h("option", { value: "randomBig" }, "🎲 大随机（全部 59,676 位画师）"),
 							h("option", { value: "randomSmall" }, "🎲 小随机（前 200 高频画师）"),
 							h("option", { value: "randomFav", disabled: artistFavs.length === 0 }, "★ 随机收藏（收藏 " + artistFavs.length + " 位）"),
+							h("option", { value: "randomGroup", disabled: artistGroups.length === 0 }, "🎲 分组随机（组内随机 · 共 " + artistGroups.length + " 组）"),
 							h("option", { value: "fixed" }, "🔍 指定画师（搜索并从列表点选）"),
 						),
+					),
+					// v1.2.0：分组随机 → 再选具体是哪个组（"画师模式 + 具体某个组"）
+					artistMode === "randomGroup" && h("div", { className: "dcp-field" },
+						h("span", null, "选择分组（每张在组内独立随机；随机档一律剔除黑名单）"),
+						h("select", {
+							value: artistGroupNow ? artistGroupNow.name : "",
+							disabled: running || !artistGroups.length,
+							onChange: (e) => setArtistGroupPick(e.target.value),
+						},
+							artistGroups.map((g) => h("option", { key: g.name, value: g.name }, g.name + " (" + g.items.length + ")"))),
+						h("div", { className: "dcp-muted" }, artistGroupNow
+							? "本组可用 " + artistGroupUsable + " / " + artistGroupNow.items.length + " 位"
+								+ (artistGroupUsable < artistGroupNow.items.length ? "（" + (artistGroupNow.items.length - artistGroupUsable) + " 位已拉黑，随机档会跳过）" : "")
+							: "还没有分组：到「画师」页新建分组并把画师加进去"),
+						h("div", { className: "row tight" },
+							h("button", {
+								className: "dcp-btn ghost", style: { padding: "2px 8px", fontSize: 11 },
+								title: "打开「画师」页：新建分组 / 把画师加入分组都在那里",
+								onClick: () => { try { window.dispatchEvent(new CustomEvent("dcp-go-tab", { detail: "artists" })); } catch { /* 忽略 */ } },
+							}, "→ 去「画师」页管理分组")),
 					),
 					(artistMode === "randomBig" || artistMode === "randomSmall") && h("div", { className: "dcp-muted" },
 						!artistList ? "画师清单加载中…"
@@ -2288,6 +2400,11 @@ window.__ModuleLoader__.load({
 .dcp-thumbs{display:flex;gap:6px;flex-wrap:wrap}
 .dcp-thumb{width:64px;height:64px;object-fit:cover;border-radius:6px;border:1px solid rgba(255,255,255,.18);cursor:pointer;opacity:.75}
 .dcp-thumb.cur{outline:2px solid #5b9dff;opacity:1}
+/* v1.2.0：历史缩略图上的删除按钮（两步确认：🗑 → 确认删除） */
+.dcp-thumb-wrap{position:relative;display:inline-block}
+.dcp-thumb-del{position:absolute;right:-2px;top:-4px;background:rgba(24,24,30,.92);color:#fda4af;border:1px solid rgba(248,113,113,.45);border-radius:5px;font-size:10px;line-height:1;padding:2px 4px;cursor:pointer;font-family:inherit}
+.dcp-thumb-del:hover{background:rgba(248,113,113,.22)}
+.dcp-thumb-del.armed{background:#b91c1c;color:#fff;border-color:#ef4444;font-size:10px;padding:2px 6px}
 .dcp-refimg{width:64px;height:64px;object-fit:cover;border-radius:6px;border:1px solid rgba(255,255,255,.18);display:block;flex:none}
 .dcp-err{color:#fda4af;font-size:12px;white-space:pre-wrap;background:rgba(248,113,113,.08);border:1px solid rgba(248,113,113,.25);border-radius:6px;padding:6px 8px}
 .dcp-note{color:#fcd34d;font-size:12px;background:rgba(251,191,36,.08);border-radius:6px;padding:4px 8px}

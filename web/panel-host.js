@@ -1,8 +1,8 @@
 // panel-host.js —— 最小宿主适配层。
 //
-// 作用：让插件版 `lib/client.js`（面板半）在**没有 DSH** 的普通网页里原样运行。
+// 作用：让插件版 `lib/client.js`（面板半）在**没有插件宿主**的普通网页里原样运行。
 // 面板源码本身保留 `window.__ModuleLoader__.load({ factory: (require) => ... })`
-// 的 DSH 客户端模块包装，本文件只补三件事：
+// 的插件式客户端模块包装，本文件只补三件事：
 //   1. `window.__ModuleLoader__.load` —— 立即执行 factory，注入本地 React；
 //   2. `ctx.effect` / `ctx.slots.inject` / `ctx.slots.register` —— 面板注册入口的替身；
 //   3. 把注册到的组件（Fab/面板）挂到 `window.__DCP_PANEL__` 供外壳（app-shell.js）使用。
@@ -27,7 +27,7 @@
       },
       slots: {
         inject: function (_name, cb) {
-          // DSH 里 inject 会等 ui-layout 声明槽位；独立版没有该服务，直接落位。
+          // 插件宿主里 inject 会等 ui-layout 声明槽位；独立版没有该服务，直接落位。
           try { return cb(); } catch (e) { console.error('[panel-host] slots.inject 失败：', e); }
         },
         register: function (meta, component) {

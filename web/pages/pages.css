@@ -35,6 +35,8 @@
 .hit-row { display: flex; align-items: center; gap: 6px; padding: 4px 8px; border-bottom: 1px solid rgba(255, 255, 255, .06); }
 .hit-row:last-child { border-bottom: 0; }
 .hit-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+/* v1.2.0：画师行下方的「加入分组」菜单（列出已存在的组 + 就地新建并加入） */
+.group-menu { display: flex; flex-direction: column; gap: 6px; border: 1px dashed rgba(255, 255, 255, .16); border-radius: 8px; padding: 6px 8px; margin: 2px 0 6px; }
 .star { background: transparent; border: 0; color: var(--warn); cursor: pointer; font-size: 13px; padding: 0 2px; }
 .star.off { color: var(--fg3); }
 
