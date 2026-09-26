@@ -737,12 +737,16 @@ async function pipeOpenAIStream(upstream, res, label, opts = {}) {
         if (choice && choice.finish_reason === 'length') truncated = true;
         if (delta.reasoning_content) {
           reasoning += delta.reasoning_content;
-          // 思考型模型会先"想"很久：给前端一条明确进度，别让用户对着空气等。
+          // v1.2.1（需求 3）：思考内容**必须能看见**，且必须与正文分开。
+          // 旧实现只发 {thinking: 字符数}，前端拿不到文本 → 用户看到的是一个进度数字，
+          // 而"思考型模型只回思考不回正文"时服务端又把思考塞进正文（见本函数末尾的兜底），
+          // 于是出现"生成内容像混进了思考页面"。现在逐帧把思考文本单独下发（字段 reasoning，
+          // 与正文的 delta 完全分离），前端渲染成可折叠的「思考过程」块。
           if (!thinkNoted) {
             thinkNoted = true;
             res.write('data: ' + JSON.stringify({ note: '模型正在思考（这些内容不会写进提示词）…' }) + '\n\n');
           }
-          res.write('data: ' + JSON.stringify({ thinking: reasoning.length }) + '\n\n');
+          res.write('data: ' + JSON.stringify({ reasoning: delta.reasoning_content, thinking: reasoning.length }) + '\n\n');
         }
         if (delta.content) {
           answer += delta.content;
@@ -760,10 +764,11 @@ async function pipeOpenAIStream(upstream, res, label, opts = {}) {
   });
   clearInterval(idleTimer);
   // 只给了思维链、没有正文：原样交给用户并说明（绝不静默给空回答）。
+  // v1.2.1：思考文本已经逐帧发过了，这里**不再重复发一遍 delta**（否则同一段文字会在界面上出现两次），
+  // 只补一条说明，并把思考当作 answer 交给下游（会话留存/归一化仍能工作）。
   if (!answer && reasoning) {
     answer = reasoning;
-    res.write('data: ' + JSON.stringify({ delta: reasoning }) + '\n\n');
-    res.write('data: ' + JSON.stringify({ note: `${label} 只输出了思考内容（未产出正文），已原样返回；可把「单次回答上限」调大或把「思考模式」设为关闭` }) + '\n\n');
+    res.write('data: ' + JSON.stringify({ note: `${label} 只输出了思考内容（未产出正文），已把思考原文当作回答返回；可把「单次回答上限」调大，或把「推理挡位」设为 off 后重试` }) + '\n\n');
   }
   return { answer, reasoning, truncated, upstreamError };
 }
@@ -937,10 +942,27 @@ async function chat(sessionId, userContent, res, opts = {}) {
   return { answer, kept: kept.messages.length, truncated, upstreamError: piped.upstreamError, normalized: norm.normalized, provider: 'local', charactersAdded: addedChars, charactersFixed: fixedChars };
 }
 
+/**
+ * 丢弃某个会话的上下文（旧语义，保留给「删除这条历史」用）。
+ * 注意：v1.2.1 起「新建对话」**不再**走这里 —— 用户要求历史永久保留，
+ * 新开对话只换 sessionId，旧记录留在 data/llm/sessions.json 里随时可回看。
+ */
 function newSession(sessionId) {
   store.dropSession(sessionId);
   eraseSlot().catch(() => {});
   return { ok: true, sessionId };
+}
+
+/**
+ * v1.2.1（需求 5）：开一个新会话，**不删任何旧会话**。
+ * 只有本地 provider 才需要顺手擦掉 llama.cpp 的 prompt 缓存（外接 API 没有这个概念）。
+ * 传入的 id 由前端生成（形如 t1a2b3c），落盘时机是第一条消息保存时。
+ */
+function openSession(sessionId, opts = {}) {
+  const id = String(sessionId || '').trim();
+  if (!id) throw new Error('缺少 sessionId');
+  if (opts.eraseCache) eraseSlot().catch(() => {});
+  return { ok: true, sessionId: id, kept: store.listSessions().items.length };
 }
 
 module.exports = {
@@ -948,7 +970,7 @@ module.exports = {
   listModels, addModel, removeModel, setDefaultModel, downloadModel, searchAbliterated,
   sha256File, verifyModel,
   serverStatus, startServer, stopServer, eraseSlot,
-  systemPrompt, buildContext, chat, newSession,
+  systemPrompt, buildContext, chat, newSession, openSession,
   apiConfig, apiReady, testApi, listApiModels, normalizeApiBase, catalog,
   server,
 };

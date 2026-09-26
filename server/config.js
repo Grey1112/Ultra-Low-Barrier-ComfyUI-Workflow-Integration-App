@@ -40,7 +40,9 @@ const paths = {
   llmLog: path.join(ROOT, 'logs', 'llama-server.log'),
 };
 
-const VERSION = '1.2.0';
+// v1.2.2（第十一轮）：退出时连带停掉本程序拉起的 ComfyUI（含跨进程孤儿清理）、
+// 端口冲突不再静默漂移（实际监听端口可从 /app/state 的顶层 port 读到）。
+const VERSION = '1.2.2';
 const BUILD_TAG = 'v' + VERSION;
 
 const DEFAULTS = {
@@ -148,6 +150,8 @@ const DEFAULTS = {
     // 上下文策略：界面上保留完整历史（可整段复制），但默认**不把上下文发给模型**。
     sendContext: false,
     // 每个会话在本地最多保留多少条消息（供界面回溯与复制；与"发给模型多少条"无关）。
+    // v1.2.1（需求 5）：历史在用户端永久保留 —— 上限从 200 提到 2000（设置页可调），
+    // 且「新建对话」不再删除旧会话（见 server/llm.js 的 openSession）。
     keepMessages: 40,
   },
 };
@@ -196,7 +200,8 @@ function normalize(s) {
   out.llm.api.idleMs = clampInt(out.llm.api.idleMs, 5000, 600000, 90000);
   // 上下文策略：界面保留历史（keepMessages），默认不把上下文发给模型。
   out.llm.sendContext = out.llm.sendContext === true;
-  out.llm.keepMessages = clampInt(out.llm.keepMessages, 2, 200, 40);
+  // v1.2.1：上限 200 → 2000（历史永久保留；仍然逐会话截断，避免文件无限增长）。
+  out.llm.keepMessages = clampInt(out.llm.keepMessages, 2, 2000, 40);
   out.download.officialTimeoutMs = clampInt(out.download.officialTimeoutMs, 1000, 120000, 10000);
   // 用户规则：10 s 内没进展就换源（两个阈值都可在设置页调）。
   out.download.startDeadlineMs = clampInt(out.download.startDeadlineMs, 2000, 120000, 10000);

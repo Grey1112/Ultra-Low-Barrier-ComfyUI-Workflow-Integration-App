@@ -78,6 +78,14 @@ html, body {
 
 .content { flex: 1; min-height: 0; overflow: hidden; display: flex; }
 
+/* ── v1.2.1：常驻标签页（切页只隐藏，不卸载） ──────────────
+   工作台（生图面板 + 内嵌 LLM）必须一直挂载：它一卸载，用户填好的提示词、
+   参数、已出图与整段对话就全没了。这里用一个 flex 行容器把各页并排，
+   非当前页用 .tab-hidden 收起（而不是从 React 树里摘掉）。 */
+.tab-panes { flex: 1; min-width: 0; min-height: 0; display: flex; }
+.tab-pane { flex: 1; min-width: 0; min-height: 0; display: flex; overflow: hidden; }
+.tab-pane.tab-hidden { display: none; }
+
 /* ── 状态与徽标 ─────────────────────────────────────────── */
 .badge {
   display: inline-flex;

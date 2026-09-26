@@ -1,4 +1,4 @@
-# comfy-panel-standalone 完整技术参考（v1.2.0）
+# comfy-panel-standalone 完整技术参考（v1.2.2）
 
 > **本文档面向谁**：接手本项目的维护者（可能在没有任何上下文的情况下冷启动）。
 > **一句话作用**：把「这个项目由哪些文件组成、每个文件负责什么、数据落在哪、为什么这么设计」讲清楚，
@@ -121,7 +121,7 @@
 | `docs/HANDOVER.md` | **项目交接文档**（第七轮新增）：交接物清单、10 分钟上手、架构地图与改动风险、10 条红线、数据落盘边界、下载/镜像体系、**验证手册（22 个脚本的基线与用途）**、维护任务手册、发布流程、已知限制、开发机环境事实（已去标识化）、许可边界、七轮变更摘要、名词表 | ✅ | 已过脱敏；**必须与代码同批更新**（改接口/加脚本/改发布流程时） |
 | `docs/FULL-REFERENCE.md` | 本文件 | ✅ | — |
 | `scripts/start.ps1` | 启动器：Node 解析 → 起后端 → 等就绪 → 开浏览器 → 起托盘 → **最小化控制台** → 跟随日志 | ✅ | UTF-8 with BOM + CRLF；所有路径参数**必须加引号**（决策 ⑲） |
-| `scripts/tray.ps1` | **托盘助手**（独立 PowerShell 进程）：打开 UI / 复制地址 / 打开日志 / 关闭控制台并停止后端；看护后端、自动消失 | ✅ | 只用系统程序集，不落资源文件、不写注册表；日志 `logs/tray.log`；见 §3.12 |
+| `scripts/tray.ps1` | **托盘助手**（独立 PowerShell 进程）：打开 UI / 复制地址 / 打开日志 / 关闭控制台并停止后端（**v1.2.2：先礼后兵** —— 先 `POST /app/quit` 请后端优雅退出，失败才 `/T /F`；两条路径最后都按归属记录再清一次 ComfyUI）；看护后端、自动消失 | ✅ | 只用系统程序集，不落资源文件、不写注册表；日志 `logs/tray.log`；见 §3.12 |
 | `scripts/bootstrap.ps1` | 便携 Node 引导（默认 `v22.14.0`，官方源 + 两个 npmmirror 镜像） | ✅ | 幂等；已存在直接跳过 |
 | `scripts/build-core.ps1` | 核心版打包 + 交付前自查（隐私/权重/GPL/文档/语法） | ✅ | 产出 `release/core` |
 | `scripts/normalize-ps1.cjs` | 把 `.ps1` 规范化为 BOM+CRLF 并做 PowerShell 解析校验 | ✅ | 临时文件 → 校验 → 原子替换 |
@@ -170,9 +170,12 @@
 关键点：
 
 - `main()`：确保 `data/`、`logs/`、`logs/jobs/`、`models/llm/`、`runtime/_dl/`、`runtime/bin/` 存在 → `log.setup(logs)` → 端口取 `process.env.DCP_PORT || settings.listen.port || 8788`，主机取 `process.env.DCP_HOST || (lan ? '0.0.0.0' : '127.0.0.1')`。
-- `listen(port, host, attempt)`：**端口占用自动 +1**（`EADDRINUSE` 且 `attempt < 20`），成功后若实际端口与设置不同则 `save({listen:{port:actual}})` 写回。
+- `listen(port, host, attempt)`：**端口占用最多自增 2 次**（v1.2.2；`EADDRINUSE` 且 `attempt < MAX_PORT_BUMP=2`，每次 WARN，日志带「第 N/2 次自增」），超限 `log.error` + 给出 `DCP_PORT` 建议 + `exit(1)`；
+  **实际端口只存内存**（`actualPort` / `listenPort()`），**不再** `save({listen:{port:actual}})` 回写设置（旧行为会把"设置里的端口"悄悄改掉，见决策 ⑪）；就绪日志「打开：」与 `DCP_READY` 都用实际端口，`/app/state` 顶层 `port` 也由它下发。
+- `main()` 在 `listen()` **之前**先跑一次 `comfy.cleanupOrphans()`（按 `data/run` 归属记录清上一次遗留的、确属本程序的 ComfyUI 孤儿）。
 - 启动就绪后向 stdout 打一行机器可读标记：`DCP_READY {"url","lanUrls","port","version"}`（启动脚本据此判断就绪、`start.ps1` 也用它搜「局域网地址：」）。
-- `SIGINT`/`SIGTERM`：先 `llm.stopServer()`，再关服务器，3 秒兜底退出。
+- 退出路径（v1.2.2）：`POST /app/quit`、`SIGINT`/`SIGTERM`/`SIGBREAK` 全部走 `beginQuit()`（停本程序拉起的 ComfyUI → 停 LLM）→ `finishQuit()`（关 HTTP → 落盘日志 → `process.exit(0)`，1.5 秒兜底）；另有 `process.on('exit')` 的**纯同步**兜底 `comfy.killOwnedSync()`。
+  *（为什么不能只靠信号：Windows 上 `taskkill /F` = `TerminateProcess`，实测 SIGTERM/SIGINT/SIGBREAK/exit 处理器一个都不跑；所以托盘必须先发 `/app/quit`，见 §3.12 与第十一轮附录。）*
 - `unhandledRejection` 记 `logs/server.log`。
 - `lanGuard(req, url)`：仅当 `listen.lan === true` **且**设置了 `listen.token` 时校验；令牌来源 `X-DCP-Token` 头或 `?token=` 查询参数。未通过返回 401 + 中文提示。
 - `ensureLanToken()`：开启 LAN 且无令牌时用 `crypto.randomBytes(12).toString('hex')` 生成并落盘；同一逻辑在 `listen()` 成功后与 `PUT /app/settings` 后各调一次。
@@ -277,7 +280,8 @@
   `cwd` = 入口脚本所在目录（便携包 = 内层 `ComfyUI/`），`detached + unref`，stdout/stderr 追加 `logs/comfyui.log`，`windowsHide`；
   然后**最多等 180 秒**（每 2 s 探一次 `/system_stats`），超时返回「进程已启动但 180 秒内没有就绪」并指向日志文件。
 （实测：冷启动 + 与另一个 ComfyUI 实例抢显存时 90 秒不够 —— Python 侧导入很重，故放宽到 180 秒。）
-- `taskkill(pid)`：Windows 走 `taskkill /PID <pid> /T /F`；其它平台 `process.kill(-pid)` 兜底。
+- `taskkill(pid)`：Windows 走 `taskkill /PID <pid> /T /F`（**实测 `/T` 能连 detached 子进程一起收** —— 孤儿的成因是父链断裂，不是 detached 逃逸）；其它平台先给进程组 `SIGTERM`、仍在则升到 `SIGKILL`。
+- **进程归属（v1.2.2）**：`ownerDir()` / `writeOwnerRecord()` / `removeOwnerRecord()` / `listOwnerRecords()` / `verifyOwnership()`（五条谓词）/ `cleanupOrphans()` / `ownedTargets()` / `stopOwned()` / `killOwnedSync()`；记录落在 `data/run/comfy-owner-<pid>.json`，`launch()` 成功后即写、子进程 `exit` 即删。**绝不按"谁在监听 `comfy.port`"清理**（那会误杀用户自己启动的实例）。
 - `pidListeningOn(port)`：Windows 上用 `powershell -NoProfile -Command "Get-NetTCPConnection -LocalPort <port> -State Listen ... OwningProcess"` 反查监听者。
 - `stop()`：不在线 → `{stopped:false, note:'ComfyUI 当前未在运行'}`；在线则优先杀自己拉起的 pid，否则杀端口监听者；**最多等 15 秒**确认端口释放，超时返回错误（含 `killed` 结果）。
 - `logTail(lines=300)`：读 `logs/comfyui.log` 返回最后 N 行（上限 5000），文件不存在返回空数组。
@@ -426,7 +430,7 @@
 
 | 可调项 | 来源 | 键/常量 | 说明 |
 |---|---|---|---|
-| 后端监听端口 | 设置 | `listen.port`（默认 8788） | 也可用环境变量 `DCP_PORT` 覆盖；被占用则自动 +1 并写回设置 |
+| 后端监听端口 | 设置 | `listen.port`（默认 8788） | 也可用环境变量 `DCP_PORT` 覆盖；**被占用时最多自增 2 次（v1.2.2），超限快速失败退出**，实际端口**只存内存、不回写设置**（见 `/app/state` 顶层 `port`） |
 | 后端监听主机 | 设置 | 由 `listen.lan` 推导 | 也可用 `DCP_HOST` 覆盖 |
 | 局域网开关/令牌 | 设置 | `listen.lan`、`listen.token`（令牌自动生成） | 令牌不在默认值里，开启 LAN 时生成 |
 | ComfyUI 模式/目录/端口 | 设置 | `comfy.mode`、`comfy.dir`、`comfy.port`（8188） | — |
@@ -500,7 +504,7 @@
 |---|---|
 | 进程模型 | 由启动器另起的**独立 powershell 进程**（`-WindowStyle Hidden`）。理由：WinForms 的 `NotifyIcon` 需要**消息循环**，放在启动器里会挡住启动流程（决策 ⑰） |
 | 图标 | `[System.Drawing.SystemIcons]::Application` —— **取系统图标，不落资源文件、不写注册表、不引入第三方依赖** |
-| 菜单 | 打开 Web UI（双击图标同效）、复制访问地址（`[Windows.Forms.Clipboard]::SetText`）、打开日志文件夹（`explorer <root>\logs`）、关闭控制台并停止后端（`taskkill /PID <pid> /T /F`；拿不到 pid 就按端口 `Get-NetTCPConnection -State Listen` 找监听进程） |
+| 菜单 | 打开 Web UI（双击图标同效）、复制访问地址（`[Windows.Forms.Clipboard]::SetText`）、打开日志文件夹（`explorer <root>\logs`）、关闭控制台并停止后端（**v1.2.2 先礼后兵**：先 `POST /app/quit` 并最多等 8 秒，失败才 `taskkill /PID <pid> /T /F`；拿不到 pid 就按端口 `Get-NetTCPConnection -State Listen` 找监听进程；两条路径最后都按 `data/run` 归属记录再清一次本程序拉起的 ComfyUI） |
 | 看护 | `Forms.Timer` 每 3000 ms 检查后端（按 pid，退化到按端口）；后端没了 → 销毁图标并 `Application::Exit()`，**不留幽灵图标** |
 | 日志 | `logs/tray.log`（就绪参数、退出原因、WinForms 加载失败原因）；写日志失败被静默吞掉 |
 | 降级 | 拿不到 WinForms → 记日志并 `exit 2`；启动器侧 `try/catch` 兜底，托盘起不来就**保持控制台可见**并提示可用 `Ctrl+C` 退出 |
@@ -785,7 +789,7 @@ window.__ModuleLoader__.load({ id: "dsh-comfy-panel", factory: (require) => { ..
 | `version` | `1` | 整数 | 设置结构版本（预留） | — |
 | `lang` | `"zh"` | `zh` \| `en` | 界面语言；非 `en` 一律按 `zh` | 即时（前端重载词典） |
 | `listen.host` | `"127.0.0.1"` | 只读派生 | 由 `listen.lan` 推导：`lan ? 0.0.0.0 : 127.0.0.1` | 重启 |
-| `listen.port` | `8788` | 1–65535 | 后端端口；被占用会自动 +1 并写回 | 重启 |
+| `listen.port` | `8788` | 1–65535 | 后端**配置**端口；被占用时最多自增 2 次（v1.2.2）、实际端口**不回写**（看 `/app/state` 顶层 `port`） | 重启 |
 | `listen.lan` | `false` | `true` \| `false` | 是否允许局域网访问（`true` 时监听 `0.0.0.0` 且**必须带令牌**） | 重启 |
 | `listen.token` | 无（自动生成） | 24 位十六进制 | LAN 令牌；来源 `X-DCP-Token` 头或 `?token=` 参数 | 即时 |
 | `comfy.mode` | `"embedded"` | `embedded` \| `external` | 内嵌（项目内 `runtime/comfyui`）或外接（用户目录） | 即时（每次 `comfyDir()` 重读） |
@@ -847,7 +851,8 @@ window.__ModuleLoader__.load({ id: "dsh-comfy-panel", factory: (require) => { ..
 
 | 方法 | 路径 | 典型调用方 |
 |---|---|---|
-| GET | `/app/state` | 外壳首屏与 5 秒轮询（`app-shell.js`） |
+| GET | `/app/state` | 外壳首屏与 5 秒轮询（`app-shell.js`）；**v1.2.2 起顶层多一个 `port`**（本程序**实际监听**端口，见下方说明） |
+| POST | `/app/quit` | **新增（v1.2.2）**：托盘「关闭控制台并停止后端」的优雅退出入口。返回 `{ok, quitting, first, calls, comfy, llm, note}`；收尾顺序 = 停本程序拉起的 ComfyUI → 停 LLM → 关 HTTP → 落盘 → `exit 0`。**重复/并发调用只收尾一次**（`first` 只有一个 `true`），非 POST 返 405 |
 | GET | `/app/selfcheck` | 设置页保存后、外壳「重新自检」按钮 |
 | GET | `/app/settings` | 外壳首屏、设置页装载与保存后 |
 | PUT/POST | `/app/settings` | 设置页「保存」、外壳 `changeLang()` |
@@ -859,6 +864,11 @@ window.__ModuleLoader__.load({ id: "dsh-comfy-panel", factory: (require) => { ..
 > 只给 `llm.runtime` 时外接 API 模式（产品默认来源）会被恒判"本地 LLM 未就绪"；以及 `listen:{lan,port,token}` ——
 > 设置页的令牌行读的就是它（见 §9 的局域网边界）。三处都在 `server/index.js` 的 `/app/state` 分支里一次性给出，
 > 数据源是 `llm.serverStatus()`（本来就返回 `provider`/`api`）与 `load()`。
+>
+> **v1.2.2 新增顶层 `port`**：本程序**实际监听**的端口（数字），来自内存里的 `actualPort`（监听前回落到 `DCP_PORT` / `listen.port`）。
+> 为什么必须单独给一个字段：取消端口回写后 `listen.port` 只剩"配置值"语义，而实际端口可能因占用自增而与它不同；
+> 前端顶栏的「服务地址」徽标就靠它渲染（`data-dcp-service-port`），取值链 = 顶层 `port` → `listen.port`（兜底并换 tooltip）→ 不渲染。
+> ⚠️ 同层的 `comfy.port` 是 **ComfyUI 自己的端口**（默认 8188），**不是**服务端口，两者永远不要混用。
 
 ### 8.2 ComfyUI 进程与兼容面
 
@@ -867,7 +877,7 @@ window.__ModuleLoader__.load({ id: "dsh-comfy-panel", factory: (require) => { ..
 | GET | `/app/comfy/detect?dir=` | 设置页「检测」、向导步骤 1「检测」 |
 | GET | `/app/comfy/status` | `/app/state` 内部（`comfy.status()`） |
 | POST | `/app/comfy/launch` | 向导底部「启动 ComfyUI」、`/comfy-panel/launch` |
-| POST | `/app/comfy/stop` | 向导底部「停止 ComfyUI」 |
+| POST | `/app/comfy/stop` | 向导底部「停止 ComfyUI」。**v1.2.2 语义变更**：只停**本程序拉起的**实例，返回 `{online, stopped, owner:"app"\|"foreign"\|"none", pids?, stillAlive?, detail?, note?}`；端口上那个 ComfyUI 若无归属记录则回报 `owner:"foreign"` 并**跳过**（旧实现按端口反查再杀，会误杀用户自己启动的实例） |
 | GET | `/app/comfy/log?tail=` | 排障（当前无页面按钮；可直接浏览器访问） |
 | GET | `/comfy-panel/config` | **面板**（`panel.js` 启动时拿 `base`） |
 | GET | `/comfy-panel/health` | 存活诊断 |
@@ -968,13 +978,14 @@ window.__ModuleLoader__.load({ id: "dsh-comfy-panel", factory: (require) => { ..
 
 1. **后端起不来（双击 `start.cmd` 一闪/报错）**
    `start.cmd` 会把非 0 退出保留在窗口里并 `pause`。看它打印的最后 15 行（来自 `logs/server-console.out.log` / `.err.log`）。
-   最常见原因：没有网络导致便携 Node 未下载（先手动 `pwsh -File .\scripts\bootstrap.ps1`）、端口被占且自增 20 次仍失败、`server\index.js` 被移动。
+   最常见原因：没有网络导致便携 Node 未下载（先手动 `pwsh -File .\scripts\bootstrap.ps1`）、端口被占且自增 **2 次**（v1.2.2 上限）仍失败、`server\index.js` 被移动。
    也可前台运行看实时输出：`pwsh -File .\scripts\start.ps1 -Foreground`。
 
-2. **端口被占（自动 +1）**
-   `server/index.js` 的 `listen()` 遇 `EADDRINUSE` 会 `port+1` 重试，**最多 20 次**；成功后把实际端口写回 `data/settings.json` 的 `listen.port`。
+2. **端口被占（v1.2.2：最多自增 2 次，不再写回）**
+   `server/index.js` 的 `listen()` 遇 `EADDRINUSE` 会 `port+1` 重试，**最多 2 次**且每次 WARN（`… 尝试 N（第 x/2 次自增）`）；仍占用则 `log.error` + 提示用 `DCP_PORT` 指定其它端口 + `exit 1`。
+   成功后**不写回** `data/settings.json`：`listen.port` 永远是配置值，实际端口从 `/app/state` 顶层 `port`、启动日志「打开：」或 `DCP_READY` 读取（三处一致）。
    启动器按 `base..base+20` 逐个探测 `/app/state` 判断就绪，所以页面地址可能比设置里的端口大几号——以启动日志打印的地址为准。
-   若 20 次都失败：看是谁占着（`Get-NetTCPConnection -LocalPort <端口> -State Listen`）或直接在设置页换一个端口。
+   若 2 次都失败：看是谁占着（`Get-NetTCPConnection -LocalPort <端口> -State Listen`）或直接在设置页换一个端口。
 
 3. **网页 404**
    - 访问的是 `/` 却 404：`web/index.html` 缺失（项目没拷全）。
@@ -1042,7 +1053,7 @@ window.__ModuleLoader__.load({ id: "dsh-comfy-panel", factory: (require) => { ..
 15. **怎么卸载？**
     **删除项目文件夹即可**：不写注册表、不写系统目录、不装服务、不留后台进程（托盘助手在后端退出时**自己退出并销毁图标**；见决策 ④/⑰）。
     唯一例外是**你自己选择的外接 ComfyUI 目录**或你自己放模型的位置——那属于你自己的既有安装，删不删由你决定。
-    中止运行：右键托盘「关闭控制台并停止后端」，或关闭启动器窗口 / 在其控制台按 Ctrl+C（会先停 llama-server）。
+    中止运行：右键托盘「关闭控制台并停止后端」（**v1.2.2：会先请后端优雅退出**，连带停掉本程序拉起的 ComfyUI 与本地 LLM），或关闭启动器窗口 / 在其控制台按 Ctrl+C（走同一套收尾）。
 
 16. **面板整块不显示 / 提示「面板组件未加载」**
     `web/panel.js` 没加载成功（404 或语法错误）。看浏览器控制台；确认用 `node --check web/panel.js` 能通过；
@@ -1081,7 +1092,7 @@ window.__ModuleLoader__.load({ id: "dsh-comfy-panel", factory: (require) => { ..
 23. **托盘图标不见了 / 关不掉**
     看 `logs/tray.log`：有「托盘已就绪」说明托盘进程起过；「后端已退出，托盘关闭」说明它按设计自行退出（**不留幽灵图标**）。
     `-NoTray` 或 `-Foreground` 启动时**本来就没有**托盘。WinForms 不可用时托盘进程会 `exit 2`，启动器会打印警告并保持控制台可见。
-    托盘关不掉后端时（极端情况）：托盘会先后按 `BackendPid` 再按端口反查监听进程 `taskkill /T /F`；仍失败就手动结束 `node.exe`。
+    托盘关不掉后端时（极端情况）：托盘先请求 `POST /app/quit` 优雅退出，失败再回退 —— 按 `BackendPid`（`/T /F`）或按端口反查监听进程；两条路径最后都按 `data/run` 归属记录清一次本程序拉起的 ComfyUI；仍失败就手动结束 `node.exe`（下次启动会自动清孤儿）。
 
 24. **下载一直失败 / 想确认到底试了哪些源**
     任务日志（`logs/jobs/<kind>-<id>.log`，界面进度弹窗同源）**开头**有一行 `候选来源 N 个：官方源 → hf-mirror → modelscope → …`；
@@ -1192,11 +1203,12 @@ window.__ModuleLoader__.load({ id: "dsh-comfy-panel", factory: (require) => { ..
   且不引入账号体系（与「零依赖」一致）。
 - **被放弃**：默认监听 `0.0.0.0`；开启 LAN 但不鉴权（同网段任何人都能提交生图任务、读你的图片）。
 
-### ⑪ 端口占用自动 +1 并写回设置
+### ⑪ 端口占用自动 +1 并写回设置（**v1.2.2 已被 ㉞ 取代**）
 - **决定**：`listen(port, host, attempt)` 遇 `EADDRINUSE` 就 `port+1` 重试，最多 20 次；成功后把实际端口写回 `listen.port`。
   启动器同步按 `base..base+20` 探测就绪。
 - **理由**：本地开发机上 8788/8188/8199 都可能在用；自动让位比「启动失败让用户改配置」体验好得多，而且写回设置后下次启动仍是稳定端口。
 - **被放弃**：直接报错退出；随机挑一个空闲端口（每次启动地址都变，书签/脚本失效）。
+- **事后修正（v1.2.2）**：写回设置是本条最大的失误 —— 它把"实际端口"变成了下一个"配置端口"，停在旧端口的标签页永远打不到后端，满屏 `Failed to fetch`；且自增上限 20 会让端口一路漂走。现在改为**上限 2 + 不回写 + 实际端口由 `/app/state` 顶层 `port` 自证**，理由见 ㉞。
 
 ### ⑫ GitHub 直连不可达时的镜像/代理列表可配置
 - **决定**：`download.githubProxies`（数组，按顺序尝试）与 `download.hfMirror` 放进设置，设置页可编辑；
@@ -1364,6 +1376,14 @@ window.__ModuleLoader__.load({ id: "dsh-comfy-panel", factory: (require) => { ..
 - **理由**：用户明确要求突出"低门槛、易上手、下载完成即可使用"。名字里带"工作流集成应用"而不是"面板"，因为它的主体是"一条能出图的完整链路"（运行时 + 权重 + 提示词 + 画师 + 面板），不是单纯的 UI 皮肤。
 - **一致性**：`scripts/check.js` 已覆盖 `.cmd` 编码、脱敏、i18n 键集一致性；改名涉及的字符串都在文档与少量源码里，改动后 17/17 自检通过。
 
+### ㉞ 退出必须连带停止"本程序拉起的" ComfyUI（v1.2.2，取代决策 ⑪ 的端口部分）
+
+- **决定**：① 新增 `POST /app/quit` 做优雅退出，托盘退出**先礼后兵**；② 进程归属走 `data/run/comfy-owner-<pid>.json` + 五条谓词，只清自己拉起的；③ 端口 `EADDRINUSE` 最多自增 **2** 次，**不回写**设置，实际端口由 `/app/state` 顶层 `port` 下发。
+- **理由**：Windows 上 `taskkill /F` = `TerminateProcess`，实测不给 node 任何执行机会（`SIGTERM`/`SIGINT`/`SIGBREAK`/`exit` 处理器一个都不跑），所以"退出页面/关托盘"这种外部动作**没法**让后端自己收尾 —— 必须先请求 `/app/quit`，再由"托盘按记录兜底 + 下次启动清孤儿"覆盖硬杀路径。
+  至于"按端口找监听者再杀"（旧 `stop()`）必须删掉：用户完全可能自己在别处起 ComfyUI，那种实例没有任何归属记录，唯一安全的判据是"我写过记录 + 命令行确实是记录里的那个 `main.py`"。
+- **被放弃**：把归属记录存进 `settings.json`（会把机器专属的 pid/路径写进用户配置，且每次启动都在动设置文件）；用"最近启动的 ComfyUI"启发式猜（会误杀）；只靠 `/T` 强杀（硬杀路径下清理逻辑根本没机会跑）。
+- **边界**：直接对后端进程 `taskkill /F` 时进程内兜底必然不执行（Windows 硬边界），由四层防护覆盖；`scripts/start.ps1` 的 `$proc.Kill()` 仍是单进程杀（不在本轮范围），后果由"下次启动 `cleanupOrphans`"兜住。详见第十一轮附录与 `docs/ROUND11-VERIFY.md`。
+
 ---
 
 ## 13. 验证记录
@@ -1450,6 +1470,8 @@ window.__ModuleLoader__.load({ id: "dsh-comfy-panel", factory: (require) => { ..
 | v1.0.0（第四轮） | 本轮追加 | 回车发送；外接 API **推理四挡**（`reasoning_effort`，实测 off/low/high/max；旧 `thinking` 自动迁移）；`sendContext`/`keepMessages` 上下文策略（界面留历史、默认不外发）；工作台重排（LLM 栏首、提示词工具第二、提示词与参考图进左栏、主图变小/历史变大、跳转图片文件夹）；默认画师 **大随机**；切模型不再清空提示词；新增 **`server/works.js`** 与本机作品接口（`/app/artists/works`、`/app/output/file`、`/app/open-folder`）；决策追加 **㉔㉕**；验证补 round4 30/30、round2-ui 23/23、round3-api 13/13、llm-test LLM_OK；新增 **附录 L** |
 | v1.0.0（第五轮） | 本轮修复 | **修复"双击 start.cmd 启动失败"的真实缺陷**：`.cmd` 由 LF+UTF-8 中文改为 **纯 ASCII + CRLF**（cmd.exe 按 OEM 代码页读批处理，中文注释会把行尾吃掉 → exit 9009）；`check.js` 新增 **[4b] 批处理编码红线**（自检 16 → **17 项**）；用 `Start-Process <包>\start.cmd`（等价双击）补上验收缺口；决策追加 **㉖**、新增 **附录 M**。 |
 | v1.0.0（第六轮） | 本轮调整 | **最小下载挡位改为 `anima-turbo-v1.1.safetensors`**：`installer/models.json` 里 turbo 由 standard 提到 minimal，Anima-3.8B-v1.1 与 qwen35_4b 降到 standard → minimal **14.00 GiB → 5.24 GiB**（standard 25.69 / full 47.27 不变）；决策追加 **㉗**；向导/计划接口实测 `tiers={5.24, 25.69, 47.27}`。 |
+| **v1.2.2**（第十一轮） | 本轮修复 | ①**退出即停**（§3.1/§3.5/§8.1/§8.2）：新增 `POST /app/quit`，收尾 = 停本程序拉起的 ComfyUI（`comfy.stopOwned`）→ 停 LLM → 关 HTTP → 落盘 → `exit 0`；`SIGINT/SIGTERM/SIGBREAK` 走同一套；`process.on('exit')` 加**纯同步**兜底 `comfy.killOwnedSync()`（只用 `spawnSync`，因为 `/F` 打死进程时唯一的执行机会是"此刻正在跑的同步代码"）；托盘 `scripts/tray.ps1` 改**先礼后兵**（先 `POST /app/quit`，6 s 请求超时 + 最多等 8 s，判据是"进程真的消失"，失败才回退 `/T /F`；两条路径最后都按归属记录再清一次，日志用 `graceful`/`forced`/`already-stopped` 区分）。②**归属记录与五条谓词**（§3.5）：`data/run/comfy-owner-<pid>.json`（`launch()` 成功即写、子进程 `exit` 即删）+ `verifyOwnership()`（记录可解析 → 进程存活 → 命令行含 `main.py` → 命令行反推入口目录 == 记录 `codeDir`（或含记录 `mainPy`）→ pid ≠ 自身）；任一条不满足**只记 WARN、绝不动手**。`cleanupOrphans()` 只在启动时清**自己写过记录**的孤儿；`ownedTargets()` 两来源（内存 `state.pid` = 亲自 spawn 的直接证据；落盘记录 = 跨进程孤儿的唯一识别方式）；`stopOwned()` 不再以"端口是否在线"为条件（自己拉起的实例可能已离线但进程仍在）。**删除**旧 `stop()` 的 `pidListeningOn(port)` 兜底 —— 那会杀掉用户自己启动的实例。③**端口**（§3.1/§7/§10）：`MAX_PORT_BUMP=2` + 每次 WARN + 超限 `log.error`/`DCP_PORT` 建议/`exit 1`；**取消 `save({listen:{port:actual}})` 回写**，实际端口只存内存（`actualPort`/`listenPort()`）；`/app/state` 顶层新增 `port`（决策 ⑪ 被 ㉞ 取代）。④**前端**（§4/§8.1）：顶栏「服务地址」徽标（`data-dcp-service-port`；取值链 顶层 `port` → `listen.port` 兜底换 tooltip → 不渲染；非法值一律当缺失）；断连只在"连通→断连"跳变画**一条**可操作 banner（`linkState.lost` 兼作闩，`count` 只累加不进 DOM；恢复即消失）；首帧连不上改 5 s 轻探自愈；同文案 error toast **30 s 节流**（`suppressedToasts` 只读可见）；`__DCP_SAVE_ARTISTS__` 单飞 + 按 key 合并 + **只在真变更时广播**（断开"广播→setState→保存→广播"回声，实测空闲请求 3659 → 5 / 22 s）。⑤版本号三处 → `v1.2.2`。⑥验证记录见**第十一轮附录**。 |
+| **v1.2.1**（第十轮） | 本轮修复+新增 | ①**常驻标签页**：导航改成 `.tab-panes > .tab-pane`，切页只隐藏不卸载 —— 修掉"切到设置就失去提示词与 LLM 历史"（两个根因：切页即卸载；`renderPage` 的 key 掺了 `renderKey`，按需加载完成时把刚挂载的页面整体重建）。后台标签页跳过 5 秒轮询；幂等 GET 加瞬时失败重试（`fetchRetry`）。②**画师分组入口补齐**：收藏与黑名单 chip 加「＋分组」，分组卡片可展开成员、逐个移出、重命名；**面板内**新增 🗂 加组入口（下拉行 / 已选 chip / 分组随机块）；`persistArtists`/`__DCP_SAVE_ARTISTS__` 改按 key 传与按 key 写，新增 `POST /app/artists/groups/replace`。③**思考过程可见 + 复制可靠**：`reasoning_content` 逐帧以独立字段 `reasoning` 下发（`thinking` 长度字段保留），前端渲染成正文之前的「🧠 思考过程」块；"只有思考没正文"时不再重复发一遍文本；前端 `setLast` 改为按"最后一条 assistant 消息"定位（旧写法打在 system 说明帧上 → 助手气泡恒空、复制按钮全灰），并用 `authoritative` 标记避免流式累积值覆盖服务端规范化后的正文。④**历史永久保留**：`POST /app/llm/session/new` 改为**只开新会话不删旧**（新增 `llm.openSession`，旧语义移到 `/app/llm/session/discard`），新增 `GET /app/llm/sessions`（只给摘要）、`DELETE /app/llm/session/:id`（唯一真删除入口）、`sessions.json` 的 `lastSessionId`（自动接回上一次对话）与侧栏「历史对话（永久保留）」卡片；`llm.keepMessages` 上限 200 → 2000。⑤**版本号 → `v1.2.1`**（`config.js` / `package.json` / 面板 `BUILD_TAG`），`scripts/check.js` 新增 **[5b] 版本号一致性**（自检 17 → **19 项**）。⑥验证记录见第十轮附录。 |
 | **v1.2.0**（第九轮） | 本轮修复+新增 | ①**输出目录不再写死**（§3.5/§3.10 与 §8.1 的 `/app/comfy/outputdir`、§9 新增边界行）：新增设置 `comfy.outputDir` 覆盖，留空时按「本程序拉起的实例 → 监听端口进程的命令行反推其入口目录 → 按模式推导」三级解析（`works.outputInfo()`，缓存 10 s）。修掉用户实测的严重问题：他自己在别处起 ComfyUI 时，本程序把「图片文件夹」与「本机作品」指向项目内的空目录，生成的照片"根本不出现在图片文件夹里"（本机实测真实出图在外部实例的 `output\<模型>\` 下，共 470 张）。②**删除历史照片**（§4.4 锚点 + `/app/output/delete`）：面板图片栏（缩略图 / 当前图）与画师页「本机作品」都能删；**两步确认**且确认按钮写明文件名（`deleteArm` 绑定"被武装的那张图"，不随 `current` 漂移）；后端只允许删 output 目录内的图片（越界/非图片 404），删空的模型子目录一并移除，并清掉 ComfyUI 历史里那条（尽力而为）。③**画师分组（最多 50 组，`store.MAX_GROUPS`）**：`data/artists.json` 新增 `groups`，新接口 `/app/artists/groups{,/create,/rename,/delete,/add,/remove}`；画师页新增分组卡片与行内「＋分组」菜单；面板新增 `randomGroup` 模式 + 具体组下拉（`artistGroups`/`artistGroupPick`）。**顺带修掉一个数据流缺陷**：面板 `persistArtists()` 写回 `window.__DCP_ARTISTS__` 时丢掉了 `groups`（面板一挂载就写一次），导致"分组随机"恒为 0 组。④**API Key 改成只写字段**（§3.1 `/app/settings` + §3.2 `save()`）：下发一律 `apiKey: ''` + `hasKey`，保存时空串 = "不改"，清空须 `llm.api.clearKey=true`；设置页显示"已配置/未配置"并加「清除 Key」。修掉"切一下思考挡位就得重新输入 API Key"（实测复现：设置页形状的保存把已存 Key 抹成空）。⑤**下载前逐源测速再固定用最快源**（§3.4）：`pickFastest()`/`probeSpeed()`，每源探 1 MiB 或最多 6 s，按实测 MB/s 排序，同一"来源家族"（host + 目录前缀）10 分钟内沿用最快源、不再重复测速；原有三条换源规则保留为兜底。⑥版本号 → `v1.2.0`；⑦验证记录见附录 P（UI 27/27、下载选源 11/11、B5 4/4）。 |
 | **v1.1.0**（第八轮） | 本轮修复+新增 | ①**逐条核对 `BUGS-AND-FIXES.md` 并修复**（B6/B7/B8/B9 在本仓库确实存在，B5 也确是缺陷）：§3.1 的 `/app/state` 补 `llm.provider`/`llm.api`/`listen`（B6/B7），§4.4/§4.3 的前端就绪度与顶栏徽标改按来源判定（B6）；`web/app-shell.js` 的 `api()` 对纯对象 body 自动 `JSON.stringify`（B8）；§3.2 自检按 `llm.provider` 条件化（B9）；§3.6 向导 `setup.json` 的 `models` 合并 `installed + skipped`（B5）；§9 新增**回环来源豁免**的边界说明（B7 的第三层缺口：本机页面与 `start.ps1` 探活都不该被令牌挡下）。②**恢复面板「🔍 指定画师」的搜索框与下拉**（§4.6 锚点：v1.0.1 迁移画师管理到独立页时误删了渲染块，`artistQuery`/`artistDropOpen`/`artistFavOnly`/`artistCustom`/`useCustomArtist` 全部成为死代码），并按需求提供**收藏画师搜索**（仅收藏范围点开即列全部收藏、子串过滤、点选即用）。③新增 i18n 键 `settings.listen.lanEnabled`。④验证记录见 §13.1 与附录 O（本轮 UI 验收 23/23、B5 4/4）；⑤新增 **`AI-DECLARATION.md`**（AI 生成声明：本项目自身全部代码与文档由 AI 生成 + 第三方边界 + 免责 + "以实测记录为准"的指引），并加入 `scripts/build-core.ps1` 的 `$IncludeFiles` 白名单与"交付文档齐全"检查（附录 O.5）。 |
 | v1.0.0（第七轮） | 本轮修复+新增 | ①新增 `GET /app/jobs`（列表 + running），向导按 `kind=setup` 重挂运行中任务，顶栏加全局任务条；②**下载引擎字节计数从未生效**（`got` 恒为初值）—— 进度/速度恒 0、停滞看门狗误杀正常下载，计数器改挂 `pipeline` 的 `Transform`；③**改名之前校验完整性**（实测 ModelScope 会把 242 MB 下成 126/121/112/3 MB 而流"正常结束"，旧代码会静默接受损坏文件）；④**`force` 一路传到下载引擎**（否则"重新下载"2.5 秒就"完成"）；⑤镜像梯队全面数据化（`hfMirrors`/`nodeMirrors`/`jsdelivrMirrors`/`githubProxies`/`extraMirrors` + 9 个占位符），并落地「10 s 无进展换源」+「15 s 无新字节判停滞」+「远慢于已见最佳源即换源」；⑥新增 `GET /app/download/speedtest`（每源真下 100 MiB）与设置页测速表；⑦角色 tag 规范化（含 Markdown 转义 `rem \(re:zero\)`），新增 `charactersFixed` 帧与 i18n 键；⑧`save()` 不再把派生梯队/等于默认值的 `githubProxies` 写进 `settings.json`；⑨项目改名「超低门槛 ComfyUI 工作流集成应用」；⑩新增 **`docs/HANDOVER.md` 项目交接文档**。决策追加 **㉘–㉝**，新增 **附录 N（镜像实测全表）**。**如实标注**：GitHub 系资源只有 gh-proxy.com 与 down.npee.cn 两个快源；`anima-turbo-v1.1`（4.2 GB）只有 ModelScope 是快源。 |
@@ -1993,6 +2015,42 @@ exit 0
 
 ---
 
+## 附：第十轮实测补充（v1.2.1：切页保留 / 分组入口 / 思考过程 / 历史永久保留）
+
+> 本轮同样在**装有真实 ComfyUI 与权重的开发机**上做端到端验证，但**换用「日常使用版」那份安装与权重**
+> （`<日常使用版>\runtime\comfyui`：`anima-turbo-v1.1.safetensors` + `qwen_3_06b_base.safetensors` + `qwen_image_vae.safetensors`），
+> 验证完把 `comfy` 段还原为内嵌模式并删除测试输出。**不验收"没跑过的路径"**。
+
+### Q.1 本轮的两个根因（实测定位，不是猜的）
+
+| 现象（用户报告） | 根因 | 证据 / 修法 |
+|---|---|---|
+| **"从控制台切到设置就失去控制台的提示词和 LLM 历史"** | ① 外壳按 tab 条件渲染，切页 = **卸载**工作台 → 面板与 LLM 的 `useState` 全部重置；② 更隐蔽：`renderPage` 的 `key = tab + '-' + renderKey`，而 `renderKey` 在按需加载完成时自增 → **刚挂载的页面被整体重建**，等于白改 | 浏览器实测（Edge CDP）：修复前切到设置再切回，`__DCP_PANEL_API__.getPrompts()` 为空、`.chat-log .msg` 为 0；修复后同样的动作提示词与消息原样保留（见 Q.2） |
+| **"无法将画师设置为自定义分组／图片部分根本不存在对应 ui 按钮"** | ① 面板**完全没有加组 UI**（分组只能在画师页对着搜索结果点）；② 数据流：面板挂载时会 `saveFavorites()` 一次，而旧 `persistArtists()` 把 favs/blacklist/groups **整份**交回外壳、`__DCP_SAVE_ARTISTS__` 又无条件 PUT favs+blacklist → 用户刚建的分组被这次"顺手写回"抹成空 | 面板侧新增 🗂 入口（下拉行 / 已选 chip / 分组随机块）；`persistArtists` 与 `__DCP_SAVE_ARTISTS__` 改为**按 key 传、按 key 写**，分组走新增的 `POST /app/artists/groups/replace`（服务端仍做 50 组归一化） |
+
+### Q.2 验收结果（都是实跑）
+
+| 用例 | 覆盖 | 结果 |
+|---|---|---|
+| `scripts/check.js` | 语法 / JSON / 中英词典 / `.ps1` 与 `.cmd` 编码 / 脱敏 / **版本号一致性（本轮新增）** | **19/19** |
+| 服务端新接口（curl 实测） | `GET /app/llm/sessions`、`POST /app/llm/session/new`（确认**不删**旧会话）、`DELETE /app/llm/session/:id`、`GET /app/llm/session/new`（必须 400）、`POST /app/artists/groups/replace` | 全通过 |
+| 外接 API（真实 DeepSeek Key） | `reasoning=off`：`reasoning_content` 长度 0、正文干净、`replace` 帧给出规范化正文；`reasoning=low`：**314 个 `reasoning` 帧**（只带思考文本）+ 65 个 `delta` 帧（只带正文）+ 1 个 `replace` 帧 → 思考与正文彻底分离 | 全通过 |
+| 真实出图（日常使用版权重） | 1024×1024 PNG、1.4 MB、28.3 s（10 步 / CFG 1 / er_sde+simple），`detectLayout` 报 `portable`，输出落在 `output/v121-accept/noartist_1_00001_.png`；测后停实例、删测试输出、还原 `settings.json` | 成功 |
+| Edge CDP 页内断言 | 常驻标签页、切设置后工作台仍在 DOM 且隐藏、切回提示词原样、`.session-row` 历史列表与自动接回、画师页分组卡片与展开/重命名入口、分组桥写回 | **16/18**（两条为脚本时序断言，见 `docs/HANDOVER.md` §13.1 的如实记录） |
+
+### Q.3 本轮新增/变更的接口与设置（同步 `docs/INTERNAL-CONTRACT.md`）
+
+| 项 | 位置 |
+|---|---|
+| 新增接口 | `GET /app/llm/sessions`（历史摘要）、`DELETE /app/llm/session/:id`（唯一真删除）、`POST /app/artists/groups/replace` |
+| 语义变更 | `POST /app/llm/session/new` = **只开新会话、不删旧会话**（丢弃上下文的旧语义移到 `POST /app/llm/session/discard`）；`GET /app/llm/session/:id` 对 `new`/`discard` 返回 400 |
+| 帧协议变更 | `/app/llm/chat` 的 SSE 新增 `data: {"reasoning":"<本帧思考文本>"}`（与 `delta` 分离；`thinking` 长度字段保留）；"只有思考没有正文"时不再重复发一遍 `delta` |
+| 数据文件 | `data/llm/sessions.json` 增加顶层 `lastSessionId`；每会话条数上限 `llm.keepMessages` 由 200 → **2000**（默认仍 40） |
+| 前端契约 | 常驻标签页 `.tab-panes > .tab-pane`（页面 key 只用 tab id）；`window.__DCP_SHELL__` 排障钩子；新增桥 `__DCP_ARTIST_GROUP__` / `__DCP_CREATE_GROUP__`，`__DCP_SAVE_ARTISTS__` 改为按 key 写 |
+| 新增 i18n 键 | `llm.thinking.*`、`llm.sessions.*`、`artists.groups.{members,rename,renamed,renamePlaceholder,removeMember,membersHint,expand,panelAdd,panelHint,fromWorks}`、`settings.llm.keepMessages.hint` |
+
+---
+
 ## 附：第九轮实测补充（v1.2.0：分组 / 删除 / 输出目录 / Key 只写 / 下载选源）
 
 > 本轮全程在一台**装有真实 ComfyUI 与权重的开发机**上做端到端验证（ComfyUI 0.37.0 跑在 8188，
@@ -2061,3 +2119,53 @@ exit 0
   "不传 `savePrefix`/`refImage` 时三条管线的图与上游插件版**逐字节等价**"，改名会让该断言失败；而面板**始终**会传 `savePrefix`，
   这三处在正常路径上永不生效、用户看不到。若要清零，需把等价比对改为"除该字段外一致"（会削弱这道保护）。
 
+---
+
+## 附：第十一轮实测补充（v1.2.2：退出连带停止 / 孤儿只清自己的 / 端口不漂移 / 断连不刷屏）
+
+> 本节记录第十一轮修复的**实测**依据。裁决证据来自**独立复核**（`docs/ROUND11-VERIFY.md`，复核者自建 harness，不复用实现者的脚本）。
+
+### R11.1 根因：孤儿不是"detached 逃逸"，而是父链断裂
+
+- **对照实验**：对**还活着**的父进程执行 `taskkill /PID <父> /T /F`，detached 子进程会**一起被收**（实测输出 `SUCCESS: The process with PID … (child process of PID …) has been terminated`），
+  `Get-CimInstance Win32_Process -Filter "ParentProcessId=<父>"` 也仍能列出它 —— 所以 `server/comfy.js` 的 `detached: true`（`:117`）+ `child.unref()`（`:121`）**不是**孤儿成因。
+- **真因**：**父链断裂**。`scripts/start.ps1` 的 `$proc.Kill()`（`:141`/`:206`）是**单进程杀**（不带 `/T`）；控制台窗口被强杀、启动器被结束时，中间那层 node 先死，而 ComfyUI 作为 detached 子进程活着 —— 此后父链已断，`/T` 永远够不着它。
+  这类孤儿在内存里没有任何痕迹（`state.pid` 为空），所以只能靠**落盘的归属记录**识别。
+- **放大器（本轮一并修掉）**：旧 `listen()` 在每次 `EADDRINUSE` 自增时都**重新注册一次就绪回调**，成功绑定后就绪逻辑连跑多遍 —— `autoStart=true` 时会一次拉起 3 个 ComfyUI，而内存只记住最后一个 pid，当场产生两个新孤儿。现在自增上限改为 2 且只走一条就绪路径。
+
+### R11.2 四层防护（逐层实测）
+
+| 层 | 机制 | 实测结果 |
+|---|---|---|
+| ① 托盘优雅退出 | `scripts/tray.ps1` 先 `POST /app/quit`（6 s 请求超时 + 最多等 8 s，判据是"后端进程真的消失"） | 托盘退出码 0、后端**自行** `exit 0`（不是被强杀）、替身被终止且记录被删；`tray.log` 写 `优雅退出成功：…`，后端 `server.log` 写 `收到退出请求（POST /app/quit）`，**没有**"回退到强制终止" |
+| ② 托盘强杀后按记录清理 | `scripts/tray.ps1` 的 `Stop-OwnedComfyUI`，无论哪条路径都执行 | 顽固后端（`/app/quit` 一律 500）→ 8 s 后回退 `/T /F`；**孤儿替身仍被按记录终止**、记录被删；无记录的替身全程存活 |
+| ③ 下次启动清孤儿 | `server/index.js` → `comfy.cleanupOrphans()` | 见下面的硬边界链路 |
+| ④ 进程内同步兜底 | `server/index.js` 的 `process.on('exit')` → `comfy.killOwnedSync()` | 只留内存 pid、只留记录两种来源都被清干净；日志 `退出同步兜底（process-exit）` |
+
+**硬边界链路实测**：`autoStart` 拉起替身并落盘记录 → 对**后端本进程**执行 `taskkill /PID <后端> /F`（**不带 `/T`**，即真正的 `TerminateProcess`）→ 后端已死、**替身仍存活且已成孤儿**（其 `ppid` 进程已不存在，证明第 ④ 层确实跑不到）→ 重启后端 → 替身被终止、记录被删，日志 `清理上一次遗留的 ComfyUI 孤儿：pid=…（…）→ 已终止进程树`。
+
+### R11.3 安全边界（"只清自己的"，六条反例 + 两条红线）
+
+`verifyOwnership()` 五条谓词任一不满足 → **只记 WARN、绝不动手**。实测反例：无归属记录的用户实例（`/app/comfy/stop` 与 `/app/quit` 之后都仍然活着，且不会被写入记录）、`codeDir` 与记录不符、命令行里没有 `main.py`、`schema` 未知、记录是坏 JSON、pid 已死、读不到命令行（PATH 里塞假的 `powershell`）—— 全部不清理。
+
+### R11.4 端口：上限、不回写、可发现
+
+| 断言 | 实测 |
+|---|---|
+| 自增上限 2 | 占住 18960/18961 → 恰好 2 条 WARN（`… 尝试 18961（第 1/2 次自增）`、`… 18962（第 2/2 次自增）`）→ 绑定 18962 |
+| 超限快速失败 | 占满 3 个端口 → 2 条 WARN 后 `端口 … 仍被占用：已连续自增 2 次仍未找到可用端口，放弃启动（不再继续漂移）。` + `DCP_PORT` 建议 + `exit 1`；**不输出假就绪**（无 `DCP_READY`） |
+| 不回写设置 | 磁盘 `data/settings.json` **字节级未变**（`listen.port` 仍是配置值） |
+| 实际端口可发现 | `/app/state` 顶层 `port` == 「打开：」日志 == `DCP_READY.port` == 实际在监听的端口，四处一致 |
+
+### R11.5 前端：一条可操作的提示，而不是刷屏
+
+- **服务地址徽标**：真后端场景（配置 19160、实际 19162）→ 徽标显示 `http://127.0.0.1:19162`，`data-dcp-service-port=19162`；桩后端逐变体：`18999→18999`、缺 `port`/`'abc'`/`70000`→ 回落配置值（tooltip 说明"这是配置值"）、缺 `listen`→ 整块不渲染，**全程没有 `undefined`/`NaN`**。
+- **断连节流**：连续 33.6 s / 7 个失败轮询周期内，提示条恒为 **1**、toast 恒为 **0**，而 `__DCP_LINK__.count` 从 1 递增到 7（提示本身不重画）；恢复连通后提示自行消失、`lost=false`。
+- **重试契约未动**：`fetchRetry` 仍是"只对 GET、只在网络层 reject 时重试 3 次"（实测每个失败周期页面侧恰好 3 次 fetch、组间约 150/300 ms）。
+- **两个真实刷屏源**：同文案 error toast 30 s 节流（25 次同文案失败 → 1 条 toast + `suppressedToasts=24`）；`__DCP_SAVE_ARTISTS__` 单飞 + 按 key 合并 + 只在真变更时广播（同一 22 s 窗口：艺术家保存请求 3659 → 5、总请求 3699 → 41；A/B 对照证明"广播闸门不能单独去掉"）。
+
+### R11.6 口径与边界
+
+- **口径**：`node scripts/check.js` **pass=19 fail=0**；后端 harness **105/105**（10 块）；前端无头 Edge **45/45**。（实现者自建 harness 的断言数不作为裁决证据。）
+- **已知边界**（本轮不修，原因见 `docs/HANDOVER.md` §13.2）：A 面板侧回声写法仍在；B 面板 `system` 缺失时会渲染「内存 NaN」（既有行为）；C `scripts/start.ps1` 的 `$proc.Kill()` 仍是单进程杀；D 硬杀后端时进程内兜底无法执行（Windows 硬边界）；E 绕过共享存储直接调外壳写入口会按旧快照回写（属 A 的另一种表现）。
+- **开发机避让**：本轮所有实测都在 `%TEMP%` 沙箱里跑（拷 `server/ web/ installer/ package.json`），**没有**碰开发副本正在运行的实例与 `data/settings.json`；替身一律用 `node.exe`（`powershell.exe` 被 detached 拉起后会立刻退出，会造成假的"清理成功"）。

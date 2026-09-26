@@ -138,6 +138,18 @@ function removeFromGroup(tag, group) {
   return { ...writeArtists(cur), result: 'removed', group: n, tag: t };
 }
 
+/**
+ * v1.2.1：整份替换分组列表（面板的「＋分组」用）。
+ * 为什么需要它：面板里的分组是本地 state，点一下加/移出后要落盘；逐条调 add/remove
+ * 在连续快速点击时会互相覆盖。整份替换 + writeArtists 的 normGroups 归一化（去重、
+ * 名字裁剪、最多 MAX_GROUPS 组）语义最明确。
+ */
+function replaceGroups(groups) {
+  const cur = readArtists();
+  cur.groups = Array.isArray(groups) ? groups : [];
+  return { ...writeArtists(cur), result: 'replaced' };
+}
+
 // ── LLM 模型清单 ─────────────────────────────────────────
 const emptyLlm = () => ({ items: {}, default: '' });
 
@@ -167,10 +179,15 @@ function removeLlmModel(file) {
   return writeLlmModels(cur);
 }
 
-// ── LLM 会话（只保留最近 N 条上下文，N 来自设置） ──────────
+// ── LLM 会话（v1.2.1：用户端永久保留；只保留最近 N 条**消息**，N 来自设置） ──
+// 语义变化：旧的 `newSession()` 会 dropSession（历史被删），本轮改成「新开一个会话 id」，
+// 旧会话留在 sessions 里供用户随时回看/复制（需求 5：历史永久保留，除非用户主动删除）。
 function readSessions() {
   const v = fsx.readJson(paths.llmSessionsFile, null);
-  return v && typeof v === 'object' && v.sessions && typeof v.sessions === 'object' ? v : { sessions: {} };
+  if (!v || typeof v !== 'object' || !v.sessions || typeof v.sessions !== 'object') {
+    return { sessions: {}, lastSessionId: '' };
+  }
+  return { sessions: v.sessions, lastSessionId: typeof v.lastSessionId === 'string' ? v.lastSessionId : '' };
 }
 
 function writeSessions(v) {
@@ -183,15 +200,37 @@ function getSession(id) {
   return all.sessions[id] || { messages: [], updatedAt: null };
 }
 
+/** 会话概览（供「历史会话」列表）：按 updatedAt 倒序，只给摘要不给全文，避免一次拉几十 MB。 */
+function listSessions() {
+  const all = readSessions();
+  const items = Object.keys(all.sessions).map((id) => {
+    const s = all.sessions[id] || {};
+    const messages = Array.isArray(s.messages) ? s.messages : [];
+    const firstUser = messages.find((m) => m && m.role === 'user' && typeof m.content === 'string');
+    return {
+      id,
+      messages: messages.length,
+      updatedAt: s.updatedAt || null,
+      preview: firstUser ? String(firstUser.content).replace(/\s+/g, ' ').slice(0, 60) : '',
+    };
+  }).sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
+  return { items, lastSessionId: all.lastSessionId || (items[0] ? items[0].id : '') };
+}
+
+function getLastSessionId() {
+  return listSessions().lastSessionId;
+}
+
 function saveSession(id, messages, limit) {
   const all = readSessions();
-  const n = Number.isFinite(limit) ? limit : 5;
+  const n = Number.isFinite(limit) ? limit : 40;
   // 归一化：只留 user/assistant，且只保留最近 n 条（n=0 时不留任何上下文）。
   const clean = (messages || [])
     .filter((m) => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
     .map((m) => ({ role: m.role, content: m.content }));
   const kept = n <= 0 ? [] : clean.slice(-n);
   all.sessions[id] = { messages: kept, updatedAt: new Date().toISOString() };
+  all.lastSessionId = id;
   writeSessions(all);
   return all.sessions[id];
 }
@@ -199,8 +238,14 @@ function saveSession(id, messages, limit) {
 function dropSession(id) {
   const all = readSessions();
   if (all.sessions[id]) delete all.sessions[id];
+  if (all.lastSessionId === id) {
+    // 删掉当前会话后回落到"最近更新"的那一条（与列表排序同一口径）
+    const rest = Object.keys(all.sessions).map((k) => ({ id: k, updatedAt: (all.sessions[k] || {}).updatedAt || '' }));
+    rest.sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+    all.lastSessionId = rest.length ? rest[0].id : '';
+  }
   writeSessions(all);
-  return { ok: true };
+  return { ok: true, lastSessionId: all.lastSessionId };
 }
 
 // ── 安装状态 ─────────────────────────────────────────────
@@ -218,9 +263,9 @@ function writeSetup(patch) {
 
 module.exports = {
   readArtists, writeArtists, toggleArtist, importArtists,
-  createGroup, renameGroup, deleteGroup, addToGroup, removeFromGroup, MAX_GROUPS,
+  createGroup, renameGroup, deleteGroup, addToGroup, removeFromGroup, replaceGroups, MAX_GROUPS,
   readLlmModels, writeLlmModels, upsertLlmModel, removeLlmModel,
-  getSession, saveSession, dropSession,
+  getSession, saveSession, dropSession, listSessions, getLastSessionId,
   readSetup, writeSetup,
   dataDir: paths.data,
 };

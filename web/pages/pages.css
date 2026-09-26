@@ -17,6 +17,33 @@
 .msg.assistant { align-self: flex-start; background: rgba(255, 255, 255, .06); border: 1px solid var(--line); }
 .msg.system { align-self: center; color: var(--fg3); font-size: 11px; background: transparent; border: 0; }
 .msg-meta { font-size: 10px; color: var(--fg3); margin-top: 4px; }
+
+/* ── v1.2.1：思考过程（需求 3）─────────────────────────────
+   思考与正文是两块：思考块用虚线+等宽字体，明确"这不是提示词内容"，
+   并且可以折叠、可以单独复制，避免用户以为思考被混进了回答。 */
+.thinking-block {
+  display: flex; flex-direction: column; gap: 4px;
+  border: 1px dashed rgba(148, 163, 184, .38); border-radius: 8px;
+  background: rgba(148, 163, 184, .08); padding: 6px 8px; margin: 2px 0 6px;
+}
+.thinking-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.thinking-title { font-size: 11px; color: var(--fg2); }
+.thinking-body {
+  font-family: ui-monospace, Consolas, monospace; font-size: 11px; color: var(--fg2);
+  white-space: pre-wrap; word-break: break-word;
+  max-height: 180px; overflow-y: auto;
+}
+
+/* ── v1.2.1：历史会话列表（需求 5）──────────────────────── */
+.session-row { align-items: stretch; padding: 3px 6px; }
+.session-pick {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px;
+  background: transparent; border: 0; color: inherit; font: inherit;
+  text-align: left; cursor: pointer; padding: 2px 4px; border-radius: 6px;
+}
+.session-pick:hover { background: rgba(255, 255, 255, .06); }
+.session-pick.on { background: rgba(47, 111, 235, .18); }
+.session-pick .name { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-input { display: flex; gap: 8px; align-items: flex-end; }
 .chat-input .textarea { min-height: 56px; }
 .fence {
@@ -27,6 +54,22 @@
 .src-toggle { display: inline-flex; border: 1px solid rgba(255, 255, 255, .16); border-radius: 7px; overflow: hidden; }
 .src-toggle button { background: transparent; border: 0; color: var(--fg2); font: inherit; font-size: 12px; padding: 5px 10px; cursor: pointer; }
 .src-toggle button.on { background: var(--accent); color: #fff; }
+
+/* ── v1.2.2：与后端失联 / 页面地址不对（U2）──────────────────
+   单条可操作提示：节流后整页只出现这一条，恢复连通即自动消失。
+   放在内容区顶部（.content 的 flex:none 顶栏块里），不遮挡常驻标签页。 */
+.link-lost {
+  display: flex; flex-direction: column; gap: 4px;
+  background: rgba(248, 113, 113, .1);
+  border: 1px solid rgba(248, 113, 113, .32);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+}
+.link-lost-title { font-size: 12px; font-weight: 700; color: #ffd7d7; }
+.link-lost-hint { font-size: 11px; color: var(--fg2); line-height: 1.5; }
+.link-lost .error { font-size: 11px; }
+.link-lost-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
 
 /* ── 画师页 ─────────────────────────────────────────────── */
 .artist-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }

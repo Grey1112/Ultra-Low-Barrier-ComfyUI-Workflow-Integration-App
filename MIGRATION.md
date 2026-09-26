@@ -1,4 +1,4 @@
-# comfy-panel-standalone 迁移指南（v1.2.0）
+# comfy-panel-standalone 迁移指南（v1.2.2）
 
 > **本文档面向谁**：要把这套「超低门槛 ComfyUI 工作流集成应用」从一台 Windows 电脑搬到另一台（或换盘符、改目录名、给朋友拷一份）的使用者与维护者。
 > **一句话作用**：告诉你**带什么、不带什么、到新机器上怎么启动、出问题怎么修**，并给出可照抄的自测步骤。
@@ -27,7 +27,7 @@
 |---|---|---|
 | `server\`、`web\`、`scripts\`、`docs\`、`assets\`、`installer\`、`LICENSES\` | ✅ **必须带** | 代码、前端、画师清单、模型目录表与许可；合计只有几 MB |
 | `start.cmd`、`package.json`、`.gitignore`、`LICENSE`、`THIRD_PARTY.md`、`README.md`、`FEATURES.md`、`MIGRATION.md` | ✅ **必须带** | 启动与文档 |
-| `data\` | ✅ **建议带**（体积极小，几 KB；**角色词表约 3.5 MB**） | 设置（含外接目录、端口、镜像配置、**外接 API 的 baseUrl / Key / 模型名**）、收藏与黑名单、LLM 模型清单与会话、向导完成状态、**角色词表（`data\characters\`）与用户别名（`data\character-aliases.json`）**。不带 = 到新机器一切从头配 |
+| `data\` | ✅ **建议带**（体积极小，几 KB；**角色词表约 3.5 MB**） | 设置（含外接目录、端口、镜像配置、**外接 API 的 baseUrl / Key / 模型名**）、收藏与黑名单、LLM 模型清单与会话、向导完成状态、**角色词表（`data\characters\`）与用户别名（`data\character-aliases.json`）**；**v1.2.2 起还有一个 `data\run\`**（ComfyUI 归属记录，含本机 pid 与绝对路径 —— **这一份不用带**）。不带 = 到新机器一切从头配 |
 | `models\llm\*.gguf` | ⚠️ **看情况** | 单个 GGUF 从几百 MB 到几 GB；带了就不用重下。**注意许可**：模型权重多为非商业许可，拷给他人前先确认是否符合其条款 |
 | `models\diffusion_models\`、`text_encoders\`、`vae\` | ⚠️ **看情况** | 按 `installer/models.json` 的档位：minimal ≈ **5.24 GB**（默认档 = `anima-turbo-v1.1` + `qwen_3_06b_base` + `qwen_image_vae`）、standard ≈ **25.69 GB**、full ≈ **47.27 GB**（三者是包含关系，详见 §3.2）。动辄几十 GB，跨机器拷贝建议用移动硬盘/局域网，并核对拷贝完整性 |
 | `runtime\` | ⚠️ **可重新获取** | 含便携 Node、7-Zip、llama.cpp、内嵌 ComfyUI、下载暂存。**拷过去最省事，但最容易拷坏**（大量小文件 + 可执行文件）。重新获取只需联网走一次向导/按钮 |
@@ -38,6 +38,8 @@
 **其他检查**：
 
 - 迁移前**先正常退出**（右键托盘图标 →「关闭控制台并停止后端」，或关闭启动器窗口 / 在其控制台按 `Ctrl+C`）—— 直接拔盘/强杀可能留下半个下载文件（`*.part`）或未写完的日志（JSON 数据是原子写的，不受影响）。
+  **v1.2.2 起**，用托盘退出还会**连带停掉本程序拉起的 ComfyUI**（先请后端优雅退出，失败才强杀，之后再按归属记录兜一次）；直接强杀 `node` 仍可能留下 ComfyUI 孤儿，但下次启动会自动清理，所以**拔盘前请先让托盘退干净**。
+- 若 `data\run\` 下留着 `comfy-owner-*.json`（v1.2.2 的归属记录）：确认后端已退出后可以整个删掉，**不要**拷到新机器（里面是本机 pid 与绝对路径，拷过去既无效也没必要）。
 - 确认新机器的**目标盘符剩余空间**：至少 ① 代码 + data（几 MB）；② 若要整体拷贝，等于源目录大小 + 20% 余量。
 - 记录源机器上的关键设置（可选）：后端端口、ComfyUI 是内嵌还是外接、外接目录、LLM 上下文条数/端口 —— 迁移后可在设置页核对。
 - 如果要把项目拷给别人：**先确认许可**（`THIRD_PARTY.md`、`LICENSES\README.md`）——权重与 ComfyUI 不应随包分发。
@@ -142,7 +144,7 @@ pwsh -File .\scripts\start.ps1 -Foreground       # 前台运行，日志直接�
 ```
 
 启动器做的事（顺序）：从**脚本自身位置**推导项目根 → 找 Node（`runtime\node\node.exe` → PATH 里的 Node 18+ → `bootstrap.ps1` 下载）→
-创建 `logs\`、`data\`、`logs\jobs\` → 后台起 `server\index.js` → 最多等 **60 秒**（端口被占时后端会自动 +1，启动器按 `base..base+20` 探测 `/app/state`）→
+创建 `logs\`、`data\`、`logs\jobs\` → 后台起 `server\index.js` → 最多等 **60 秒**（端口被占时后端会自动往后试，**v1.2.2 起最多自增 2 次**，再占用就快速失败并提示用 `DCP_PORT` 换端口；启动器仍按 `base..base+20` 探测 `/app/state`）→
 打开浏览器（除非 `-NoBrowser`）→ 拉起**托盘助手**（`scripts\tray.ps1`，独立进程）→ **把控制台最小化到任务栏** → 跟着后端进程，直到你退出。
 
 **退出方式**：右键系统托盘图标 →「**关闭控制台并停止后端**」（推荐），或把控制台从任务栏还原后按 `Ctrl+C`，或直接关闭窗口。
@@ -237,6 +239,7 @@ pwsh -File .\scripts\start.ps1 -Foreground       # 前台运行，日志直接�
 | LLM 模型清单 | `data\llm\models.json` | `{items:{文件名:{file,origin,source,addedAt}}, default}` | 建议带（配合一起带 `models\llm\` 才有意义） |
 | LLM 会话 | `data\llm\sessions.json` | `{sessions:{会话id:{messages:[{role,content}], updatedAt}}}` | 可带可不带（只保留最近 N 条） |
 | 向导完成状态 | `data\setup.json` | `{completed, mode, comfySource, comfyDir, modelsDir, models[], artists, licenses, llm, updatedAt}` | 建议带（否则会一直提示「请先完成向导」） |
+| ComfyUI 归属记录 | `data\run\comfy-owner-<pid>.json`（**v1.2.2 新增**） | 本程序给它自己拉起的 ComfyUI 写的"身份证"：`{schema, buildTag, pid, ownerPid, startedAtMs, python, mainPy, codeDir, port, spawnCommand}` —— 里面是**本机**的 pid 与绝对路径 | **不用带**（拷过去也无效：pid 与命令行都对不上，清理时会直接跳过并删记录）。它是"只清自己拉起的 ComfyUI"的唯一依据，缺了它只会漏清孤儿，不会误杀 |
 | 后端日志 | `logs\server.log`（超 5 MB 滚动为 `server.1.log`） | 运行日志 | 可不带 |
 | ComfyUI 子进程日志 | `logs\comfyui.log` | 启动 ComfyUI 的 stdout/stderr | 可不带 |
 | llama-server 日志 | `logs\llama-server.log` | LLM 子进程输出 | 可不带 |
@@ -298,7 +301,7 @@ pwsh -File .\scripts\start.ps1 -Foreground       # 前台运行，日志直接�
 | # | 现象 | 原因 | 处理 |
 |---|---|---|---|
 | 1 | 顶栏红条 / 自检 error `comfy-dir-missing`，面板显示 ComfyUI 离线 | 外接模式记的是源机器的绝对路径，新机器上不存在 | 按 §6 三选一（改指本机目录 / 改内嵌模式 / 重跑向导），改完「重新自检」 |
-| 2 | 页面打不开，启动器说「后端在 60 秒内没有就绪」，最后几行提到 `EADDRINUSE` | 端口被别的东西占着，且自增 20 次都没成功（或设置里的端口被防火墙/其它服务占用） | 用 `-Port 9000` 启动，或在设置页换端口；查占用：`Get-NetTCPConnection -LocalPort <端口> -State Listen` |
+| 2 | 页面打不开，启动器说「后端在 60 秒内没有就绪」，最后几行提到 `EADDRINUSE` | 端口被别的东西占着，且自增 **2 次**（v1.2.2 的上限）都没成功（或设置里的端口被防火墙/其它服务占用） | 用 `-Port 9000` 启动，或在设置页换端口；查占用：`Get-NetTCPConnection -LocalPort <端口> -State Listen` |
 | 3 | `runtime\` 拷坏了导致 node 起不来（启动器报找不到可用 Node，或 Node 一启动就崩） | 大量小文件 + 可执行文件在拷贝中损坏/被杀软拦截 | 直接**删掉 `runtime\node\`** 再启动，`scripts\bootstrap.ps1` 会重新下载；`runtime\bin\llama\` 坏了就在「本地 LLM」页重装；`runtime\comfyui\` 坏了就在向导里重装 |
 | 4 | 模型文件没拷全 → 向导/下载报「大小不符」或 sha256 校验失败 | 拷贝中断、磁盘满、或目标盘文件系统限制 | 看 `logs\jobs\` 里的具体文件名与错误；重新下载该模型（设置里 `force` 或删掉半成品文件后重跑向导）；注意 `*.part` 残留要清掉 |
 | 5 | PowerShell 被拦（脚本「无法加载」「禁止运行脚本」）或杀软报毒 | 执行策略 / 杀软把 `runtime\` 里的可执行文件当可疑程序 | 用 `start.cmd`（它显式带 `-ExecutionPolicy Bypass`）；或手动 `powershell -ExecutionPolicy Bypass -File .\scripts\start.ps1`；把 `<项目根>` 加入杀软白名单/排除目录 |
@@ -371,6 +374,8 @@ pwsh -File .\scripts\start.ps1 -Foreground       # 前台运行，日志直接�
 | v1.0.0（第四轮） | 本轮追加 | 回车即发送；外接 API **四挡推理**（off/low/high/max，实测数据见附录 L）；**上下文只留本地、默认不外发**（历史可整段复制）；工作台重排（LLM 在最上、提示词工具第二、提示词/参考图进左栏、主图变小历史变大、跳转图片文件夹）；默认画师 **大随机**；**切模型不再清空提示词与画师设置**；画师页新增**本机作品**（缩略图 + 一键收藏 + 搜索 + 「本地没有产品」空态）。 |
 | v1.0.0（第五轮） | 本轮修复 | 修复**双击 `start.cmd` 启动失败**的真实缺陷：`start.cmd` 由「LF + UTF-8 中文注释」改为**纯 ASCII + CRLF**（cmd.exe 按 OEM 代码页读批处理文件，中文注释会吃掉行尾 → exit 9009）；`scripts/check.js` 新增 **[4b] 批处理编码红线**（自检 16 → **17 项**）；验收补上「双击等价启动」（`Start-Process <包>\start.cmd`）；MIGRATION 新增 §13 给其他设备的两条硬约束。 |
 | v1.0.0（第六轮） | 本轮调整 | 最小下载挡位的生图模型改为 **`anima-turbo-v1.1.safetensors`**：`installer/models.json` 里 turbo 由 standard 提到 **minimal**、`Anima-3.8B-v1.1` 与 `qwen35_4b` 降到 standard，最小挡位 **14.00 → 5.24 GB**（正好等于"面板默认配置开箱能出图"的最小集），standard / full 不变。 |
+| **v1.2.2**（第十一轮） | 本轮修复 | 与迁移相关的三点：①**新增 `data\run\comfy-owner-<pid>.json` 归属记录**（本程序拉起的 ComfyUI 的"身份证"，含本机 pid 与本机绝对路径）—— **不需要跟着迁移**：里面有 pid，拷到别的机器既无意义也不会误伤（清理前要过五条谓词，任何一条不满足就跳过）；不打算带 `data\` 也不会影响启动。②**端口不再被回写**：以前 `EADDRINUSE` 自增后的实际端口会被悄悄写进 `data\settings.json` 的 `listen.port`，于是"设置里的端口"可能已经不是你最初填的那个；现在 `listen.port` 永远是配置值，**实际端口只存内存**，要看真实端口请用 `/app/state` 顶层 `port`、启动日志「打开：`http://127.0.0.1:<端口>/`」或 `logs\server.log`（换机后如果在 `settings.json` 里看到 `listen.port` 与当初填的不一样，那是老版本回写的残留，直接改成你要的端口即可）。③**退出方式更安全**：用托盘「关闭控制台并停止后端」会**先请求后端优雅退出**（连带停掉本程序拉起的 ComfyUI 与本地 LLM），失败才强杀；直接结束 `node` 进程仍可能留下 ComfyUI 孤儿，但**下次启动会自动清理**（只清本程序拉起的，你自己在别处启动的实例永远不动）。 |
+| **v1.2.1**（第十轮） | 本轮修复+新增 | 与迁移相关的三点：①**`data/llm/sessions.json` 现在记 `lastSessionId`**（与 `sessions` 同级）—— 老文件没有该字段时自动按空处理，拷过去照常能读；有了它，换机后打开对话页会**自动接回上一次的对话**。②**「新建会话」不再删除旧会话**（v1.2.0 及更早会 `dropSession`，也就是说"新开一段对话"会把上一段抹掉）—— 拷贝/升级前留在 `sessions.json` 里的历史，升级后仍在，可以在右侧「历史对话（永久保留）」里逐条回看或删除。③**`llm.keepMessages` 上限从 200 提到 2000**（默认仍是 40）：如果你以前把它调到过上限、觉得历史被截太短，现在可以调更大；它只影响界面回看与复制，**不影响发给模型的上下文条数**（那是 `llm.contextMessages`，0–20）。 |
 | **v1.2.0**（第九轮） | 本轮修复+新增 | 与迁移相关的三点：①**`data/artists.json` 新增 `groups` 字段**（画师分组，最多 50 组）—— 老文件没有该字段时自动按空数组处理，拷过去即可继续用；②**输出目录（图片文件夹）不再写死"项目内 runtime\comfyui\ComfyUI\output"**：留空 `comfy.outputDir` 时会跟随**实际在跑的那个 ComfyUI**（本程序拉起的实例 / 监听端口的进程命令行反推 / 按模式推导）。换机后如果 ComfyUI 装在别处，以前会出现"图生成了但「本机作品」是空的、跳转文件夹打开的是空目录"，现在自动指向正确目录；也可以直接在设置页填 `输出目录` 覆盖。③**API Key 变成只写字段**：`data/settings.json` 里的 `llm.api.apiKey` 仍是唯一存放处（已 gitignore），但接口不再回显明文；**拷贝给别人前请清空它**（设置页有「清除 Key」按钮）。 |
 | **v1.1.0**（第八轮） | 本轮修复 | 迁移相关只有一处、但很关键：**局域网开关与"探活被令牌挡下"**。旧版一旦在设置页保存过"允许局域网访问"，`data\settings.json` 里的 `listen.lan=true` + 令牌会让**本机**请求也 401，于是 ① 设置页被外壳换成"后端 API 不可用"、令牌行看不到；② 双击 `start.cmd` 时启动器的 `http://127.0.0.1:<端口>/app/state` 探活拿不到 200，等满 60 秒后判定"后端没有就绪"并杀掉后端 —— 换机后若继承了这个 `settings.json`，面板会**看起来起不来**。现在 `lanGuard` 只对**非回环来源**要令牌，本机不再受影响（其它设备仍必须带 `?token=`）。另：`/app/state` 增加 `llm.provider` / `llm.api` / `listen` 三个字段（老前端读到多出来的字段无副作用）。 |
 | v1.0.0（第七轮） | 本轮修复+新增 | 迁移相关的四点：①**镜像梯队现在是设置项**（`download.hfMirrors / nodeMirrors / jsdelivrMirrors / githubProxies`），换到别的网络环境可以在设置页整套替换，不用改代码；②`save()` **不再把派生出来的梯队（以及等于默认值的 `githubProxies`）写进 `data\settings.json`** —— 拷到别的机器时，`settings.json` 里只有"用户真正设过的值"，新机器会用当前版本的默认梯队（旧行为会把当时那几台机器的镜像列表固化进文件）；③新增 `GET /app/jobs` 与顶栏全局任务条，换机器后长任务（ComfyUI 便携包 1.8 GB / 权重 3.9 GB）在任何一个页面都能看到进度；④新增 **`docs/HANDOVER.md` 项目交接文档**（含迁移/发布/验证手册），接手人先读它。**如实标注**：该环境实测 GitHub 系资源只有 `gh-proxy.com` 与 `down.npee.cn` 两个快源，到别的网络环境请先用设置页的「镜像测速」验一遍。 |

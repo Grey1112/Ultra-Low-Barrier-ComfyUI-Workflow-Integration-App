@@ -141,7 +141,9 @@ window.__ModuleLoader__.load({
 
 		// v1.0.0（独立版）：构建标识。面板头部据此自证"页面加载的是哪一版"。
 		// 与插件版不同：独立版静态直接托管、**没有 ?rev= 快照机制**，改代码刷新即生效。
-		const BUILD_TAG = "v1.2.0";
+		// 【发版必改】这里与 server/config.js 的 VERSION、package.json 的 version 必须一致
+		//（README「4 处版本号」里的面板这一处）。v1.2.1 起由 scripts/check.js 的 [6] 项强制校验。
+		const BUILD_TAG = "v1.2.2";
 
 		// 实时通道地址：永远走面板自己的来源（同源 relay），不直连 8188。
 		// 纯函数，便于 node 侧冒烟测试直接断言。
@@ -349,24 +351,65 @@ window.__ModuleLoader__.load({
 			.filter((g) => g.name);
 		const groupByName = (name) => loadGroups().find((g) => g.name === name) || null;
 		// 乐观更新 + 交给外壳持久化（外壳提供 window.__DCP_SAVE_ARTISTS__，内部走服务端接口）。
+		// v1.2.1（需求 2 的回归修复）：**只把显式传入的键交给外壳**。
+		// 旧写法无条件合并 favs/blacklist/groups 三份快照，而面板一挂载就会 saveFavorites() 一次 ——
+		// 用户刚在画师页新建的分组/黑名单会被这次"顺手写回"抹掉（现象就是"分组建了但面板里没有"）。
+		// 现在按 key 传，外壳只 PUT 传进来的那一份；本地 window.__DCP_ARTISTS__ 仍然整份合并，
+		// 保证面板读到的是完整数据。
 		const persistArtists = (next) => {
 			const cur = artistStore();
 			const merged = {
 				favs: [...new Set((next.favs ?? cur.favs).map(String).filter(Boolean))],
 				blacklist: [...new Set((next.blacklist ?? cur.blacklist).map(String).filter(Boolean))],
-				// v1.2.0：必须把分组一起带上 —— 面板一挂载就会 saveFavorites 一次，
-				// 旧写法会把 window.__DCP_ARTISTS__.groups 直接抹掉（面板"分组随机"因此恒为空）。
 				groups: Array.isArray(next.groups) ? next.groups : (Array.isArray(cur.groups) ? cur.groups : []),
 			};
 			if (typeof window !== "undefined") {
 				window.__DCP_ARTISTS__ = merged;
-				if (typeof window.__DCP_SAVE_ARTISTS__ === "function") window.__DCP_SAVE_ARTISTS__(merged);
+				const patch = {};
+				if (next.favs !== undefined) patch.favs = merged.favs;
+				if (next.blacklist !== undefined) patch.blacklist = merged.blacklist;
+				if (next.groups !== undefined) patch.groups = merged.groups;
+				if (Object.keys(patch).length && typeof window.__DCP_SAVE_ARTISTS__ === "function") {
+					window.__DCP_SAVE_ARTISTS__(patch);
+				}
 			}
 			return merged;
 		};
 		const saveFavorites = (list) => persistArtists({ favs: list ?? [] });
 		const saveBlacklist = (list) => persistArtists({ blacklist: list ?? [] });
+		// v1.2.1：分组是独立一维（与收藏/黑名单不互斥），整份替换写回。
+		const saveGroups = (groups) => persistArtists({ groups: Array.isArray(groups) ? groups : [] });
 		const toggleArtist = (list, tag) => (list ?? []).includes(tag) ? list.filter((t) => t !== tag) : [...(list ?? []), tag];
+		/**
+		 * v1.2.1（需求 2）：把画师加进某个分组 / 从某个分组移出。
+		 * 分组与收藏、黑名单**互不排斥**（同一维语义见 server/store.js），所以这里只动 groups。
+		 * 双写：① 本地乐观更新（面板的「分组随机」下拉立刻更新）；② 调外壳的
+		 * window.__DCP_ARTIST_GROUP__ 走服务端（服务端是唯一真相，成功后广播 dcp-artists-changed
+		 * 把画师页与面板一起刷新）。服务端失败时把本地回滚并返回 null，绝不假装成功。
+		 */
+		const toggleArtistGroup = async (tag, groupName, action) => {
+			const t0 = String(tag || "").trim();
+			const n0 = String(groupName || "").trim();
+			if (!t0 || !n0) return null;
+			const act = action === "remove" ? "remove" : "add";
+			const cur = loadGroups();
+			const next = cur.map((g) => (g.name === n0
+				? { name: g.name, items: act === "remove" ? g.items.filter((x) => x !== t0) : [...new Set([t0, ...g.items])] }
+				: g));
+			if (!next.some((g) => g.name === n0)) return null;      // 组不存在：交给调用方提示
+			saveGroups(next);
+			const api0 = (typeof window !== "undefined" && window.__DCP_ARTIST_GROUP__) || null;
+			if (typeof api0 === "function") {
+				try {
+					await api0({ tag: t0, group: n0, action: act });
+				} catch (e) {
+					saveGroups(cur);                                 // 回滚本地乐观更新
+					return { ok: false, error: String((e && e.message) || e) };
+				}
+			}
+			return { ok: true, tag: t0, group: n0, action: act };
+		};
+
 		// 收藏与黑名单互斥：加入一个列表即从另一个列表移除（后执行的操作覆盖）。
 		const toggleFavExclusive = (tag) => {
 			const cur = artistStore();
@@ -1440,6 +1483,11 @@ window.__ModuleLoader__.load({
 			// v1.2.0：画师分组（服务端 data/artists.json 的 groups）+ 分组模式选中的组
 			const [artistGroups, setArtistGroups] = useState(() => loadGroups());
 			const [artistGroupPick, setArtistGroupPick] = useState("");
+			// v1.2.1（需求 2）：面板内的「＋分组」菜单状态 —— 正在给哪位画师选分组。
+			// 【冒烟红线】这批 hook 整体追加在链尾，顺序只增不移。
+			const [groupMenuFor, setGroupMenuFor] = useState("");
+			const [groupNewName, setGroupNewName] = useState("");
+			const [groupBusy, setGroupBusy] = useState("");
 
 			// v1.0.0：画师数据以服务端为准；画师管理页改了数据会广播事件，这里同步回面板 state。
 			// v1.2.0：分组也一起同步（画师页新建/加组后，面板的「分组随机」下拉立刻可用）。
@@ -1502,6 +1550,9 @@ window.__ModuleLoader__.load({
 
 			// 收藏变化即持久化（loadFavorites 的写回对偶）
 			useEffect(() => { saveFavorites(artistFavs); }, [artistFavs]);
+			// v1.2.1（需求 2）：分组变化即持久化 —— 旧版只有收藏有写回，分组只在"画师页→面板"单向同步，
+			// 于是用户在面板里加过分组后刷新，分组又变回服务端的旧值。
+			useEffect(() => { saveGroups(artistGroups); }, [artistGroups]);
 
 			// final=true 表示 WS 已明确结束该 prompt；否则只有 history 进入终态才算结束。
 			async function collectOutputs(promptId, final) {
@@ -1886,6 +1937,85 @@ window.__ModuleLoader__.load({
 				setArtistDropOpen(false);
 				flashNote("已使用自定义画师 " + t + "（不校验清单；可收藏，收藏后进入收藏列表与「仅收藏」检索）");
 			};
+			// ── v1.2.1（需求 2）：面板内的「＋分组」────────────────────────
+			// 用户报的根因是"图片/生图这一侧根本没有加组入口"：分组只能在画师页对着搜索结果点。
+			// 现在指定画师的下拉行、已选 chip、自定义画师与「分组随机」块里都能直接加/移出。
+			/** 某个画师所属的分组名单（面板里只读展示用）。 */
+			const groupsOfArtist = (tag) => (tag
+				? loadGroups().filter((g) => g.items.includes(tag)).map((g) => g.name)
+				: []);
+			/** 把画师加进/移出某组：本地乐观更新由 toggleArtistGroup 负责，写回由外壳走服务端。 */
+			const changeGroup = async (tag, name, action) => {
+				if (!tag || !name) return;
+				setGroupBusy(action + ":" + name);
+				try {
+					const r = await toggleArtistGroup(tag, name, action);
+					if (!r) { flashNote("分组「" + name + "」不存在（可能刚被删掉）", 6000); return; }
+					if (r.ok === false) { flashNote("加入分组失败：" + r.error, 8000); return; }
+					setArtistGroups(loadGroups());
+					flashNote(action === "remove"
+						? "已把 " + tag + " 移出分组「" + name + "」"
+						: "已把 " + tag + " 加入分组「" + name + "」（分组随机档可用）", 6000);
+				} finally {
+					setGroupBusy("");
+				}
+			};
+			const createGroupAndAdd = async (tag) => {
+				const n = groupNewName.trim();
+				if (!n || !tag) return;
+				setGroupBusy("create:" + n);
+				try {
+					const api0 = (typeof window !== "undefined" && window.__DCP_CREATE_GROUP__) || null;
+					if (typeof api0 !== "function") { flashNote("分组接口不可用：请刷新页面后重试", 8000); return; }
+					const r = await api0(n);
+					if (!r) { flashNote("新建分组失败", 8000); return; }
+					setGroupNewName("");
+					await changeGroup(tag, n, "add");
+				} finally {
+					setGroupBusy("");
+				}
+			};
+			/** 「＋分组」菜单：列出已存在的组（点一下加/移出），也能就地新建一个并加入。 */
+			const groupMenu = (tag) => {
+				const mine = groupsOfArtist(tag);
+				const list = artistGroups || [];
+				return h("div", { className: "dcp-group-menu" },
+					list.length
+						? h("div", { className: "dcp-group-chips" }, list.map((g) => {
+							const already = g.items.includes(tag);
+							return h("button", {
+								key: "pg" + g.name,
+								className: "dcp-btn ghost" + (already ? " on" : ""),
+								style: { padding: "2px 8px", fontSize: 11 },
+								disabled: !!groupBusy || running,
+								title: already ? ("再点一下把 " + tag + " 移出「" + g.name + "」") : ("把 " + tag + " 加入「" + g.name + "」"),
+								onClick: () => changeGroup(tag, g.name, already ? "remove" : "add"),
+							}, (already ? "✓ " : "＋ ") + g.name + "（" + g.items.length + "）");
+						}))
+						: h("div", { className: "dcp-muted" }, "还没有分组：在下面输入名字新建一个，画师会同时加进去"),
+					h("div", { style: { display: "flex", gap: 6, alignItems: "center", marginTop: 6 } },
+						h("input", {
+							value: groupNewName,
+							disabled: running,
+							placeholder: list.length >= 50 ? "已达上限：最多 50 个分组" : "新建分组并加入…",
+							onChange: (e) => setGroupNewName(e.target.value),
+							onKeyDown: (e) => { if (e.key === "Enter") { e.preventDefault(); createGroupAndAdd(tag); } },
+						}),
+						h("button", {
+							className: "dcp-btn", style: { padding: "2px 8px", fontSize: 11 },
+							disabled: running || !groupNewName.trim() || list.length >= 50 || !!groupBusy,
+							onClick: () => createGroupAndAdd(tag),
+						}, "新建并加入"),
+						h("button", {
+							className: "dcp-btn ghost", style: { padding: "2px 8px", fontSize: 11 },
+							onClick: () => { setGroupMenuFor(""); setGroupNewName(""); },
+						}, "关闭")),
+					mine.length
+						? h("div", { className: "dcp-muted", style: { marginTop: 4 } },
+							"当前所属分组：" + mine.join("、") + "（「🎲 分组随机」会从这里取画师）")
+						: h("div", { className: "dcp-muted", style: { marginTop: 4 } },
+							"加入分组后，工作台的「🎲 分组随机」就能按这个组随机取画师"));
+			};
 			// v0.6：先把「这份权重本身此刻能不能加载」说清楚，再谈组合兼容性。
 			const curUnusable = unusableReason(curModel, animaM?.values, unetL?.values);
 			// 当前路线的图形态（条件节点 / CLIPLoader.type / 采样器 / 空潜空间来源）
@@ -2117,7 +2247,14 @@ window.__ModuleLoader__.load({
 								className: "dcp-btn ghost", style: { padding: "2px 8px", fontSize: 11 },
 								title: "打开「画师」页：新建分组 / 把画师加入分组都在那里",
 								onClick: () => { try { window.dispatchEvent(new CustomEvent("dcp-go-tab", { detail: "artists" })); } catch { /* 忽略 */ } },
-							}, "→ 去「画师」页管理分组")),
+							}, "→ 去「画师」页管理分组"),
+							// v1.2.1（需求 2）：不切页也能加组 —— 目标画师取"本次指定 / 自定义输入"
+							(artistFixed || artistCustomTag) ? h("button", {
+								className: "dcp-btn ghost", style: { padding: "2px 8px", fontSize: 11 }, disabled: running,
+								title: "把 " + (artistFixed || artistCustomTag) + " 加入本组（不切页）",
+								onClick: () => { setGroupNewName(""); setGroupMenuFor(artistFixed || artistCustomTag); },
+							}, "🗂 把当前画师加入分组") : null),
+						groupMenuFor === (artistFixed || artistCustomTag) && (artistFixed || artistCustomTag) ? groupMenu(artistFixed || artistCustomTag) : null,
 					),
 					(artistMode === "randomBig" || artistMode === "randomSmall") && h("div", { className: "dcp-muted" },
 						!artistList ? "画师清单加载中…"
@@ -2177,10 +2314,27 @@ window.__ModuleLoader__.load({
 										tag + (artistBlackSet.has(tag) ? "（已拉黑）" : "")),
 									h("button", { className: "dcp-artist-drop-star", title: artistFavs.includes(tag) ? "从收藏移除 " + tag : "收藏 " + tag, onMouseDown: (e) => { e.stopPropagation(); const next = toggleFavExclusive(tag); setArtistFavs(next.favs); setArtistBlacklist(next.blacklist); } }, artistFavs.includes(tag) ? "★" : "☆"),
 									h("button", { className: "dcp-artist-drop-star", style: { color: artistBlackSet.has(tag) ? "#fda4af" : undefined }, title: artistBlackSet.has(tag) ? "取消拉黑 " + tag : "拉黑 " + tag + "（三档随机均不再出现）", onMouseDown: (e) => { e.stopPropagation(); const next = toggleBlacklistExclusive(tag); setArtistFavs(next.favs); setArtistBlacklist(next.blacklist); } }, "🚫"),
+									// v1.2.1（需求 2）：在生图面板里就能把画师放进自定义分组
+									h("button", {
+										className: "dcp-artist-drop-star",
+										title: "把 " + tag + " 加入自定义分组（不切页）",
+										disabled: running,
+										onMouseDown: (e) => { e.stopPropagation(); setGroupNewName(""); setGroupMenuFor(groupMenuFor === tag ? "" : tag); },
+									}, "🗂"),
 								))
 								: h("div", { className: "dcp-artist-drop-row" },
 									h("span", { className: "dcp-artist-drop-name" }, artistFavOnly ? "收藏里没有匹配的画师（可在「全部清单」里搜索并点 ★ 收藏）" : "无匹配画师（池内共 59,676 位，输入前几个字母搜索）")),
 						),
+						// v1.2.1（需求 2）：给"当前搜索词对应的画师"就地加组（下拉没开时也能用）
+						(artistFixed || artistExact) && h("div", { className: "dcp-field", style: { gap: 4 } },
+							h("span", null, "把这位画师加入自定义分组"),
+							h("div", { className: "row tight" },
+								h("button", {
+									className: "dcp-btn ghost", style: { padding: "2px 8px", fontSize: 11 }, disabled: running,
+									title: "点开分组列表：选一个加入 / 再点一次移出 / 也可就地新建",
+									onClick: () => { setGroupNewName(""); setGroupMenuFor(groupMenuFor === (artistFixed || artistExact) ? "" : (artistFixed || artistExact)); },
+								}, "🗂 " + (artistFixed ? "分组" : "把搜索到的画师分组") + "（" + groupsOfArtist(artistFixed || artistExact).length + "）")),
+							groupMenuFor === (artistFixed || artistExact) ? groupMenu(artistFixed || artistExact) : null),
 						artistFixed && h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
 							h("span", { className: "dcp-artist-chip" + (artistBlackSet.has(artistFixed) ? " blocked" : "") },
 								h("span", null, "已选画师：" + artistFixed + (artistBlackSet.has(artistFixed) ? "（已拉黑）" : "")),
@@ -2196,7 +2350,14 @@ window.__ModuleLoader__.load({
 								title: artistFavs.includes(artistFixed) ? "从收藏移除" : "收藏该画师",
 								onClick: () => { const next = toggleFavExclusive(artistFixed); setArtistFavs(next.favs); setArtistBlacklist(next.blacklist); },
 							}, artistFavs.includes(artistFixed) ? "⭐ 取消收藏" : "⭐ 收藏"),
+							// v1.2.1（需求 2）：直接给「本次指定画师」加组
+							h("button", {
+								className: "dcp-btn ghost", style: { padding: "2px 8px", fontSize: 11 }, disabled: running,
+								title: "把该画师加入自定义分组（分组随机档可用）",
+								onClick: () => { setGroupNewName(""); setGroupMenuFor(groupMenuFor === artistFixed ? "" : artistFixed); },
+							}, "🗂 分组（" + groupsOfArtist(artistFixed).length + "）"),
 						),
+						artistFixed && groupMenuFor === artistFixed ? groupMenu(artistFixed) : null,
 						!artistFavOnly && !artistList && h("div", { className: "dcp-muted" }, "画师清单加载中…"),
 						!artistFavOnly && artistList && artistList.failed && h("div", { className: "dcp-muted" }, "画师清单不可用：assets/artists/ 下缺少清单 txt（自定义画师仍可直接输入使用）"),
 					),
@@ -2439,6 +2600,10 @@ window.__ModuleLoader__.load({
 .dcp-artist-drop-star{flex:none;background:transparent;border:0;color:#fcd34d;font-size:13px;cursor:pointer;padding:0 2px}
 .dcp-artist-chip{display:inline-flex;align-items:center;gap:6px;background:rgba(47,111,235,.18);border:1px solid rgba(91,157,255,.45);border-radius:6px;padding:2px 8px;font-size:12px;color:#d8e6ff}
 .dcp-artist-chip button{background:transparent;border:0;color:#fda4af;cursor:pointer;font:inherit;font-size:11px;padding:0}
+/* v1.2.1（需求 2）：面板内的「＋分组」菜单 —— 组多时只滚动这一块，不把整个下拉撑爆 */
+.dcp-group-menu{display:flex;flex-direction:column;gap:4px;border:1px dashed rgba(255,255,255,.22);border-radius:6px;padding:6px 8px;margin-top:4px}
+.dcp-group-chips{display:flex;flex-wrap:wrap;gap:6px;max-height:120px;overflow-y:auto}
+.dcp-group-chips .dcp-btn.on{background:rgba(34,197,94,.22);color:#86efac}
 `;
 
 		// 声明依赖 slots 服务：fiber 会等 ui-renderer 把服务备好再跑 apply；

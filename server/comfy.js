@@ -9,7 +9,7 @@ const net = require('node:net');
 const path = require('node:path');
 const http = require('node:http');
 const { spawn, spawnSync } = require('node:child_process');
-const { paths, load, comfyDir } = require('./config');
+const { paths, load, comfyDir, BUILD_TAG } = require('./config');
 const fsx = require('./util/fsx');
 const log = require('./util/log');
 
@@ -125,6 +125,27 @@ async function launch() {
     state.lastError = null;
     state.spawnCommand = [layout.python, ...args].join(' ');
     state.codeDir = path.dirname(layout.mainPy);   // 记住入口目录：输出目录就挂在它下面（见 outputDirInfo）
+    // v1.2.2（R1/R2）：把"这是我拉起的"落盘。内存里的 state.pid 一旦进程重启就没了，
+    // 而跨进程孤儿恰恰只能在下次启动时靠这条记录识别出来。
+    writeOwnerRecord({
+      schema: OWNER_SCHEMA,
+      buildTag: BUILD_TAG,
+      pid: child.pid,
+      ownerPid: process.pid,
+      startedAtMs: state.startedAt,
+      python: layout.python,
+      mainPy: layout.mainPy,
+      codeDir: path.dirname(layout.mainPy),
+      port: cur.port,
+      spawnCommand: state.spawnCommand,
+    });
+    // 子进程自己退出（用户手动关掉、崩溃）时立刻清掉归属记录，
+    // 免得下次启动把一条废 pid 当孤儿去比对（也顺手把 state.pid 置空，让 status.running 说实话）。
+    child.on('exit', () => {
+      removeOwnerRecord(child.pid);
+      if (state.pid === child.pid) state.pid = null;
+    });
+    child.unref();
     log.info(`已拉起 ComfyUI：pid=${child.pid} cwd=${path.dirname(layout.mainPy)} port=${cur.port}`);
   } catch (e) {
     state.lastError = e.message;
@@ -144,10 +165,20 @@ async function launch() {
   };
 }
 
+/**
+ * 终止**进程树**（只传进程号；调用方必须先确认真的是本程序拉起的那个 ComfyUI）。
+ * win32：taskkill /T /F（实测 /T 能连 detached 子进程一起收）。
+ * 非 win32：等价物 = 先给进程组 SIGTERM（detached 的子进程自成一个进程组），仍在就一步升到 SIGKILL ——
+ *          退出路径不会再有第二次机会，所以不能只发一次信号就走。
+ */
 function taskkill(pid) {
   if (process.platform !== 'win32') {
-    try { process.kill(-pid, 'SIGKILL'); } catch { try { process.kill(pid, 'SIGKILL'); } catch { /* ignore */ } }
-    return true;
+    const sig = (s) => {
+      try { process.kill(-pid, s); return true; } catch { try { process.kill(pid, s); return true; } catch { return false; } }
+    };
+    sig('SIGTERM');
+    if (pidAlive(pid)) sig('SIGKILL');
+    return !pidAlive(pid);
   }
   const r = spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { encoding: 'utf8' });
   return r.status === 0;
@@ -169,14 +200,14 @@ function pidListeningOn(port) {
  * 用户经常是自己在别处（例如另一块盘上的自建 ComfyUI）起 ComfyUI，而本程序按内嵌布局去找
  * `<项目>/runtime/comfyui/ComfyUI/output`，于是生成的照片"根本不出现在图片文件夹里"。
  */
-function cmdlineOf(pid) {
+function cmdlineOf(pid, timeoutMs = 8000) {
   if (process.platform !== 'win32' || !pid) return '';
   const n = Number(pid);
   if (!Number.isFinite(n) || n <= 0) return '';
   try {
     const r = spawnSync('powershell', ['-NoProfile', '-Command',
       `(Get-CimInstance Win32_Process -Filter "ProcessId=${n}" -ErrorAction SilentlyContinue).CommandLine`],
-      { encoding: 'utf8', timeout: 8000 });
+      { encoding: 'utf8', timeout: timeoutMs });
     return String(r.stdout || '').trim();
   } catch { return ''; }
 }
@@ -225,27 +256,232 @@ function outputDirInfo(port) {
   return null;
 }
 
-/** 一键停止：优先停我们拉起的进程；否则停监听该端口的进程（同机回环）。 */
-async function stop() {
-  const cur = current();
-  const online = await probe(cur.port, 1200);
-  if (!online) { state.pid = null; return { online: false, stopped: false, note: 'ComfyUI 当前未在运行' }; }
-  const pid = state.pid || pidListeningOn(cur.port);
-  if (!pid) {
-    return { online: true, stopped: false, error: `ComfyUI 在 ${cur.port} 端口运行，但不是本程序拉起的，也未能取得它的进程号；请手动结束该进程。` };
+// ── 进程归属：只清"本程序拉起的"那一个 ComfyUI ────────────
+//
+// 为什么必须落盘（第十一轮实测结论）：孤儿的真实成因**不是** detached 脱离进程树
+// （实测 detached 子进程照样被 taskkill /T 杀掉），而是"父链被单进程杀掉之后断掉"——
+// 启动器被强杀（scripts/start.ps1 的 $proc.Kill() 是不带 /T 的单进程杀）时，中间那层 node 死掉，
+// 而 ComfyUI 作为 detached 子进程活着，父链断裂 → /T 永远够不着 → 跨进程孤儿，
+// 下次启动时 launch() 又"探测到端口有回应就返回 online:true"把它认领了。
+// 内存里的 state.pid 对这类孤儿永远是空的，所以唯一能识别它的就是**落盘的归属记录**：
+//   data/run/comfy-owner-<pid>.json（data/ 已被 .gitignore 忽略，绝不入库、不带机器路径进仓库）
+//
+// 红线：**绝不**按"谁在监听 comfy.port"清理 —— 那正是用户自己启动的实例（旧 stop() 会误杀它）。
+// 判定谓词见 docs/ROUND11-REQUIREMENTS.md §7.2：五条全过才动手，任一不过只记日志。
+
+const OWNER_SCHEMA = 1;
+
+function ownerDir() { return path.join(paths.data, 'run'); }
+
+function ownerFileOf(pid) { return path.join(ownerDir(), `comfy-owner-${pid}.json`); }
+
+function writeOwnerRecord(rec) {
+  try {
+    fsx.writeJsonAtomic(ownerFileOf(rec.pid), rec);
+    return true;
+  } catch (e) {
+    log.warn('写入 ComfyUI 归属记录失败（不影响启动，只影响下次的孤儿清理）：' + e.message);
+    return false;
   }
-  const killed = taskkill(pid);
-  const t0 = Date.now();
-  while (Date.now() - t0 < 15000) {
-    if (!(await probe(cur.port, 1000))) {
-      state.pid = null;
-      log.info(`已停止 ComfyUI：pid=${pid}`);
-      return { online: false, stopped: true, pid };
-    }
-    await new Promise((r) => setTimeout(r, 1000));
-  }
-  return { online: true, stopped: false, pid, error: `结束进程 ${pid} 后 15 秒内端口仍在监听（killed=${killed}）` };
 }
+
+function removeOwnerRecord(pid) {
+  const n = Number(pid);
+  if (!Number.isInteger(n) || n <= 0) return false;
+  try { fs.unlinkSync(ownerFileOf(n)); return true; } catch { return false; }
+}
+
+/** 列出 data/run 下的全部归属记录（含解析失败的；后者一律不参与终止判定）。 */
+function listOwnerRecords() {
+  let names = [];
+  try { names = fs.readdirSync(ownerDir()); } catch { return []; }
+  const out = [];
+  for (const name of names) {
+    if (!/^comfy-owner-\d+\.json$/i.test(name)) continue;
+    const file = path.join(ownerDir(), name);
+    let rec = null;
+    let error = null;
+    try {
+      rec = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
+      if (!rec || typeof rec !== 'object' || Array.isArray(rec)) { rec = null; error = '记录不是 JSON 对象'; }
+    } catch (e) { error = e.message; }
+    out.push({ file, rec, error });
+  }
+  return out;
+}
+
+/** 进程是否存活（EPERM = 存在但没有权限，也算存活）。 */
+function pidAlive(pid) {
+  const n = Number(pid);
+  if (!Number.isInteger(n) || n <= 0) return false;
+  try { process.kill(n, 0); return true; } catch (e) { return e && e.code === 'EPERM'; }
+}
+
+function normPathText(p) {
+  return String(p || '').replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
+}
+
+/**
+ * 五条谓词全过才认"这条记录指向的确实是本程序拉起的 ComfyUI"：
+ *   ① 记录存在、可解析、schema 已知、pid 是正整数；② 进程存活；③ 命令行非空且确实是 ComfyUI main.py，
+ *   并且反推出的入口目录 == 记录 codeDir（或命令行含记录 mainPy）；④ pid ≠ 本进程；⑤ 事后删记录（调用方做）。
+ * 任何一条不满足 → 只记日志、绝不动手：宁可漏清，也绝不误杀。
+ */
+function verifyOwnership(rec, opts = {}) {
+  if (!rec || typeof rec !== 'object') return { ok: false, reason: '记录缺失或不可解析' };
+  if (rec.schema !== OWNER_SCHEMA) return { ok: false, reason: '记录 schema 未知：' + String(rec.schema) };
+  const pid = Number(rec.pid);
+  if (!Number.isInteger(pid) || pid <= 0) return { ok: false, reason: '记录里的 pid 非法：' + String(rec.pid) };
+  if (pid === process.pid) return { ok: false, pid, reason: '记录指向本进程自身' };
+  if (!pidAlive(pid)) return { ok: false, dead: true, pid, reason: '进程已不存在' };
+  const cmd = cmdlineOf(pid, opts.cmdlineTimeoutMs);
+  if (!cmd) return { ok: false, pid, reason: '读不到命令行，无法确认它是 ComfyUI main.py' };
+  if (!/main\.py/i.test(cmd)) return { ok: false, pid, reason: '命令行里没有 main.py（不是 ComfyUI 入口）' };
+  const cmdDir = codeDirFromCmdline(cmd);
+  const wantDir = normPathText(rec.codeDir);
+  const wantMain = normPathText(rec.mainPy);
+  const dirMatch = !!wantDir && !!cmdDir && normPathText(cmdDir) === wantDir;
+  const mainMatch = !!wantMain && normPathText(cmd).includes(wantMain);
+  if (!dirMatch && !mainMatch) {
+    return { ok: false, pid, reason: '命令行与记录的入口对不上（可能是 pid 已被复用）' };
+  }
+  return { ok: true, pid, reason: dirMatch ? '命令行入口目录与记录一致' : '命令行含记录的 main.py' };
+}
+
+/**
+ * 启动时清掉上一次留下的、**确实属于本程序**的 ComfyUI 孤儿（R2）。
+ * 候选只来自 data/run 下本程序自己写的归属记录 —— 用户自己启动的实例没有任何记录，永远不在候选里。
+ */
+function cleanupOrphans() {
+  const records = listOwnerRecords();
+  const result = { dir: ownerDir(), scanned: records.length, killed: [], removed: [], skipped: [] };
+  for (const { file, rec, error } of records) {
+    const name = path.basename(file);
+    if (error) {
+      result.skipped.push({ file: name, reason: '记录不可解析：' + error });
+      log.warn(`归属记录 ${name} 不可解析，已跳过（不动任何进程）：${error}`);
+      continue;
+    }
+    const v = verifyOwnership(rec);
+    if (!v.ok) {
+      // 进程已经不在：记录肯定是废的，删掉即可（删记录 ≠ 杀进程，不会误伤）。
+      if (v.dead) { removeOwnerRecord(rec.pid); result.removed.push(rec.pid); }
+      result.skipped.push({ file: name, pid: rec.pid, reason: v.reason });
+      log.warn(`归属记录 ${name} 未清理（不动手）：${v.reason}`);
+      continue;
+    }
+    const killed = taskkill(v.pid);
+    removeOwnerRecord(v.pid);
+    result.killed.push({ pid: v.pid, taskkillOk: killed, why: v.reason });
+    log.info(`清理上一次遗留的 ComfyUI 孤儿：pid=${v.pid}（${v.reason}）→ ${killed ? '已终止进程树' : '终止命令未成功'}`);
+  }
+  if (result.killed.length) {
+    log.info(`启动清理完成：终止了 ${result.killed.length} 个上一次由本程序拉起、却残留至今的 ComfyUI 进程。`);
+  }
+  return result;
+}
+
+/**
+ * 本程序自己拉起的 ComfyUI 进程号清单。
+ * 两个来源：① 内存 state.pid —— 本次运行**亲自 spawn** 出来的，direct 证据，无需再验；
+ *           ② data/run 下的归属记录 —— 跨进程/跨重启的孤儿只有它能识别，必须过五条谓词。
+ */
+function ownedTargets(opts = {}) {
+  const out = [];
+  const seen = new Set();
+  const add = (pid, source, why) => {
+    const n = Number(pid);
+    if (!Number.isInteger(n) || n <= 0 || n === process.pid || seen.has(n)) return;
+    seen.add(n);
+    out.push({ pid: n, source, why });
+  };
+  if (state.pid) add(state.pid, 'memory', '本次运行由本程序拉起');
+  for (const { file, rec, error } of listOwnerRecords()) {
+    if (error) continue;
+    const v = verifyOwnership(rec, opts);
+    if (v.ok) add(v.pid, path.basename(file), v.reason);
+  }
+  return out;
+}
+
+/**
+ * 同步兜底清理（给 process 的 'exit' 事件用）。
+ * 为什么必须**整个同步**：Windows 上 taskkill /F 就是 TerminateProcess，实测不给 node 任何执行机会
+ * （SIGTERM/SIGINT/SIGBREAK/exit 处理器一个都不跑），能被执行的只有"此刻正在跑的同步代码"，
+ * 所以这里一行 async/await 都不能有，只用 spawnSync。
+ * 覆盖：正常退出、process.exit()、以及 SIGINT/SIGTERM 处理器里触发的退出 —— 这些路径都能跑完。
+ * taskkill /F 直接打死本进程时这段代码同样不会被执行：那种情况由"托盘先礼后兵"（scripts/tray.ps1
+ * 先 POST /app/quit）与"下次启动清理孤儿"（cleanupOrphans）兜住。
+ */
+function killOwnedSync(why = 'process-exit') {
+  const out = { why, killed: [], skipped: [] };
+  const targets = ownedTargets({ cmdlineTimeoutMs: 2500 });
+  for (const t of targets) {
+    if (!pidAlive(t.pid)) {
+      removeOwnerRecord(t.pid);
+      out.skipped.push({ pid: t.pid, reason: '进程已不存在' });
+      continue;
+    }
+    const ok = taskkill(t.pid);
+    removeOwnerRecord(t.pid);
+    out.killed.push({ pid: t.pid, taskkillOk: ok, source: t.source });
+  }
+  if (state.pid) state.pid = null;
+  try {
+    if (out.killed.length) {
+      log.info(`退出同步兜底（${why}）：已终止本程序拉起的 ComfyUI `
+        + out.killed.map((k) => `pid=${k.pid}${k.taskkillOk ? '' : '(终止命令未成功)'}`).join('、'));
+    }
+  } catch { /* 退出阶段日志失败不抛 */ }
+  return out;
+}
+
+/**
+ * 一键停止（异步，给面板「停止 ComfyUI」与退出收尾用）：**只停本程序拉起的**，不再按端口兜底。
+ * 与旧实现的差别（这是第十一轮的红线）：
+ *   · 旧 `stop()` 在内存没有 pid 时会退到 `pidListeningOn(port)` —— 那会杀掉**用户自己启动的** ComfyUI；
+ *   · 旧 `stop()` 先 probe 端口，离线就 early-return —— 而我们自己拉起的实例可能已经离线但进程还在
+ *     （退出时必须照样停掉，见 R1），所以这里**不以端口在线与否为条件**。
+ * 非本程序拉起的实例：不动手，明确回报"已跳过"。
+ */
+async function stopOwned(why = 'manual') {
+  const cur = current();
+  const targets = ownedTargets();
+  if (!targets.length) {
+    const online = await probe(cur.port, 1000);
+    return {
+      online, stopped: false, owner: online ? 'foreign' : 'none',
+      note: online
+        ? `127.0.0.1:${cur.port} 上的 ComfyUI 不是本程序拉起的（没有任何归属记录），已跳过；要停它请手动结束该进程。`
+        : '本程序当前没有拉起的 ComfyUI 实例。',
+    };
+  }
+  const detail = [];
+  for (const t of targets) {
+    if (!pidAlive(t.pid)) {
+      removeOwnerRecord(t.pid);
+      detail.push({ pid: t.pid, taskkillOk: false, note: '进程已不存在' });
+      continue;
+    }
+    const ok = taskkill(t.pid);
+    removeOwnerRecord(t.pid);
+    detail.push({ pid: t.pid, taskkillOk: ok, source: t.source });
+  }
+  if (state.pid) state.pid = null;
+  const stillAlive = detail.filter((d) => pidAlive(d.pid)).map((d) => d.pid);
+  const online = await probe(cur.port, 800);
+  log.info(`已停止本程序拉起的 ComfyUI（${why}）：`
+    + detail.map((d) => `pid=${d.pid}${d.taskkillOk ? '' : '(终止命令未成功)'}`).join('、')
+    + (online ? `；端口 ${cur.port} 仍有 ComfyUI 在监听（可能是另一个实例，未动它）` : ''));
+  return {
+    online, stopped: stillAlive.length === 0, owner: 'app',
+    pids: detail.map((d) => d.pid), stillAlive, detail,
+    note: stillAlive.length ? `进程 ${stillAlive.join('、')} 仍在运行（可能权限不足），请手动结束。` : undefined,
+  };
+}
+
+/** 兼容旧名字：POST /app/comfy/stop 与退出收尾都走同一个安全口径。 */
+async function stop() { return stopOwned('面板「停止 ComfyUI」'); }
 
 function logTail(lines = 300) {
   try {
@@ -386,5 +622,7 @@ module.exports = {
   proxy, relaySocket,
   // v1.2.0：输出目录定位（图片文件夹 / 本机作品 / 删除都以此为准）
   outputDirInfo, codeDirOfRunning, cmdlineOf, codeDirFromCmdline, pidListeningOn,
+  // v1.2.2：进程归属（只清本程序拉起的实例）+ 退出的同步兜底 + 启动孤儿清理
+  stopOwned, killOwnedSync, cleanupOrphans, verifyOwnership, listOwnerRecords, ownerDir, taskkill,
   state,
 };

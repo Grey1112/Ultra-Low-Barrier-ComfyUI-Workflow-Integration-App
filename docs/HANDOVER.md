@@ -4,7 +4,7 @@
 > 其余四份文档的分工是：`README.md` 面向使用者、`FEATURES.md` 面向功能核对、`MIGRATION.md` 面向搬迁到别的机器、
 > `docs/FULL-REFERENCE.md` 是逐文件/逐接口/逐决策的完整参考。**本文件只讲"交接"**：谁负责什么、怎么验、怎么发、坑在哪。
 >
-> 版本：**v1.2.0**｜项目名：**超低门槛 ComfyUI 工作流集成应用**（包名 `comfy-panel-standalone`）｜最后更新：第九轮末
+> 版本：**v1.2.2**｜项目名：**超低门槛 ComfyUI 工作流集成应用**（包名 `comfy-panel-standalone`）｜最后更新：第十一轮末
 >
 > **三个占位符**（本文件的真实路径不写死，避免交付物里出现机器路径）：
 > `<开发副本>` = 你手上的完整项目目录（含 `server\ web\ runtime\ models\ data\`）；
@@ -22,9 +22,10 @@
 | 代码在哪 | 开发副本 `<开发副本>\`；可上传 GitHub 的干净拷贝在 `<开发副本>\release\core\`（由脚本生成，**不要手改**） |
 | 怎么起 | 双击 `start.cmd`（纯 ASCII + CRLF，内部调 `scripts\start.ps1`）→ 浏览器自动开 `http://127.0.0.1:8788/` |
 | 技术栈 | 后端 Node ≥18 CommonJS；前端**无构建步骤**：vendored React 18.3.1 UMD + 原生 ES 模块页面，不用 JSX（`React.createElement`） |
-| 总量 | 后端 13 个文件约 4,300 行；前端 16 个文件约 5,300 行；文档 5 份；核心版 **62 个文件** |
-| 自检一条命令 | `<开发副本>\runtime\node\node.exe scripts\check.js` → 期望 **17/17** |
-| 最大风险 | ① 交付物里出现真实机器路径/用户名/API Key；② `.cmd` 写成非 ASCII 或裸 LF（双击必挂）；③ 破坏"可迁移性"（写死绝对路径） |
+| 总量 | 后端 13 个文件约 5,200 行；前端 16 个文件（10 个 JS 模块约 5,600 行 + 3 个样式文件 + 2 份词典）；文档 5 份；核心版 **67 个文件**（按 `scripts\build-core.ps1` 白名单口径：7 个目录 + 11 个顶层文件；脚本每次打包会打印「核心版文件数」，以它为最终值） |
+| 自检一条命令 | `<开发副本>\runtime\node\node.exe scripts\check.js` → 期望 **19/19** |
+| **动手改代码之前先看** | **§4 开头那段「每次改动都必须更新版本号」** —— 这是给后续 Agent 的第一条硬规矩，`check.js` `[5b]` 会强制 |
+| 最大风险 | ① 交付物里出现真实机器路径/用户名/API Key；② `.cmd` 写成非 ASCII 或裸 LF（双击必挂）；③ 破坏"可迁移性"（写死绝对路径）；④ 改了代码没推版本号（顶栏徽标与 `check.js` `[5b]` 都会暴露）；⑤ **退了程序却把 ComfyUI 留成孤儿**（v1.2.2 的四层防护不能拆，见 §2 与 §13.2） |
 | 未完成的事 | 见 §10（`anima-turbo` 第 3 个镜像源、跨平台、跨机局域网实测等） |
 
 ---
@@ -49,7 +50,7 @@
 ```powershell
 # ① 自检（不联网、不改文件）
 cd <开发副本>
-.\runtime\node\node.exe scripts\check.js          # 期望：结果：pass=17 fail=0
+.\runtime\node\node.exe scripts\check.js          # 期望：结果：pass=19 fail=0
 
 # ② 起服务（自带便携 Node；不打开浏览器）
 $env:DCP_NO_OPEN='1'; .\runtime\node\node.exe server\index.js
@@ -58,11 +59,18 @@ $env:DCP_NO_OPEN='1'; .\runtime\node\node.exe server\index.js
 curl.exe -s http://127.0.0.1:8788/app/state        # 返回 JSON，comfy.online 视 ComfyUI 是否在跑
 ```
 
-- 端口：后端 **8788**（被占用会自动 +1），内嵌 ComfyUI **8188**，本地 llama-server **8199**。
+- 端口：后端 **8788**，内嵌 ComfyUI **8188**，本地 llama-server **8199**。
   环境变量 `DCP_PORT` / `DCP_HOST` 可覆盖，`DCP_NO_OPEN=1` 表示不自动开浏览器。
+  **v1.2.2 起端口冲突不再静默漂移**：被占用时最多自增 **2** 次（每次 WARN），再占用就快速失败退出并提示用 `DCP_PORT` 指定其它端口；
+  **实际端口只存内存、绝不回写** `data/settings.json`（`listen.port` 永远是配置值）。要看真实端口只有三处权威来源：`/app/state` 顶层 `port`、启动日志「打开：`http://127.0.0.1:<port>/`」、stdout 的 `DCP_READY {...}`。
 - 想跑通生图还需要：内嵌 ComfyUI 已安装（`runtime\comfyui\`）且**正在运行**（面板/向导里的「启动」按钮，或 `POST /app/comfy/launch`）。
-- **重要**：ComfyUI 是后端拉起的子进程。**强杀后端进程树会把 ComfyUI 一起带走**（验收时踩过：面板显示离线 → 模型下拉为空，
-  被误判成代码回归）。杀后端之后请重新 `POST /app/comfy/launch`。
+- **ComfyUI 是本程序拉起的子进程，退出时会连带停掉 —— 只清自己拉起的**（v1.2.2）：
+  退出请用**托盘右键 →「关闭控制台并停止后端」**，它会先 `POST /app/quit` 请后端优雅退出（后端顺带停掉自己拉起的 ComfyUI），失败才回退 `taskkill /T /F`。
+  四层防护：① 托盘优雅退出 → ② 托盘强杀后按 `data/run` 归属记录再清一次 → ③ 下次启动 `cleanupOrphans()` 清孤儿 → ④ 进程内 `process.on('exit')` 的同步兜底 `killOwnedSync`。
+  **用户自己启动的 ComfyUI 永远不在候选里**（它没有任何归属记录），`/app/comfy/stop` 对它只回报 `owner=foreign` 并跳过。
+  ⚠️ 注意纠正一个常见误解：孤儿**不是**因为"`detached: true` 让 `taskkill /T` 抓不到"——父进程还活着时 `/T /F` 能连 detached 子进程一起收（实测）；
+  真因是**父链断裂**：`scripts\start.ps1` 的 `$proc.Kill()` 是**单进程杀**（不带 `/T`），控制台窗口被强杀/启动器被结束时中间那层 node 先死，ComfyUI 以 detached 子进程存活、父链已断，此后 `/T` 再也够不着它，下次启动又会被 `launch()` 的"探测到端口有回应就返回 online:true"认领。
+  验收时踩过的坑：这正是"面板显示离线 → 模型下拉为空"的一种成因，别急着判成代码回归 —— 先 `POST /app/comfy/launch`。
 
 ---
 
@@ -72,37 +80,39 @@ curl.exe -s http://127.0.0.1:8788/app/state        # 返回 JSON，comfy.online 
 
 | 文件 | 行数 | 职责 | 改动风险 |
 |---|---|---|---|
-| `index.js` | ~572 | HTTP 路由与所有 `/app/*`、`/comfy-panel/*` 接口；面板反代；SSE 任务流 | 中（接口契约，改完要同步 `docs/INTERNAL-CONTRACT.md`） |
-| `config.js` | ~295 | 路径推导、设置默认值/夹紧/落盘、自检 | **高**（`paths` 与 `DEFAULTS` 是全项目的根） |
-| `download.js` | ~506 | 下载引擎：镜像梯队展开、三条换源规则、断点续传、sha256、完整性防线、镜像测速 | **最高**（所有安装路径都走它） |
-| `comfy-install.js` | ~648 | 向导主流程：7-Zip、ComfyUI 本体、自定义节点、权重、画师清单、许可 | 高 |
-| `comfy.js` | ~314 | ComfyUI 进程管理与布局探测（`detectLayout`）、artists 清单 | 中 |
-| `llm.js` | ~900 | llama.cpp 运行时与模型管理、本地/外接两条推理路径、SSE、角色补全接线 | 高 |
+| `index.js` | ~756 | HTTP 路由与所有 `/app/*`、`/comfy-panel/*` 接口；面板反代；SSE 任务流；**v1.2.2：`POST /app/quit` 优雅退出、端口自增上限 2 次、`/app/state` 顶层 `port`** | 中（接口契约，改完要同步 `docs/INTERNAL-CONTRACT.md`） |
+| `config.js` | ~305 | 路径推导、设置默认值/夹紧/落盘、自检 | **高**（`paths` 与 `DEFAULTS` 是全项目的根） |
+| `download.js` | ~609 | 下载引擎：镜像梯队展开、三条换源规则、断点续传、sha256、完整性防线、镜像测速 | **最高**（所有安装路径都走它） |
+| `comfy-install.js` | ~650 | 向导主流程：7-Zip、ComfyUI 本体、自定义节点、权重、画师清单、许可 | 高 |
+| `comfy.js` | ~576 | ComfyUI 进程管理与布局探测（`detectLayout`）、**v1.2.2 的进程归属记录 / 五条谓词 / `cleanupOrphans` / `stopOwned` / `killOwnedSync`**、artists 清单 | 中（但"只清自己的"是红线，见 §4 红线 14） |
+| `llm.js` | ~912 | llama.cpp 运行时与模型管理、本地/外接两条推理路径、SSE、角色补全接线 | 高 |
 | `characters.js` | ~449 | Danbooru 角色词表 + 563 条中文别名 + 输出补全/规范化 | 中 |
-| `works.js` | ~129 | 扫描 ComfyUI `output` 目录（本机作品） | 低 |
+| `works.js` | ~194 | 扫描 ComfyUI `output` 目录（本机作品）、输出目录三级解析 | 低 |
 | `jobs.js` | ~194 | 长任务（下载/安装）的事件、列表、SSE 广播 | 中 |
-| `store.js` | ~146 | `data/` 下的 JSON 读写（画师、LLM 模型、会话、setup） | 低 |
-| `util/fsx.js` | ~141 | 文件/哈希/格式化工具 | 低 |
+| `store.js` | ~262 | `data/` 下的 JSON 读写（画师、分组、LLM 模型、会话、setup） | 低 |
+| `util/fsx.js` | ~141 | 文件/哈希/格式化工具（含原子写） | 低 |
 | `util/zip.js` | ~128 | 7-Zip 定位与解压、zip 解压、单根提升 | 低 |
 | `util/log.js` | ~49 | 日志 | 低 |
+
+> 行数为 v1.2.2 末的实测值（`Get-ChildItem server -Recurse -Filter *.js` + 逐文件计数），**每次改动请顺手核对一次**。
 
 ### 3.2 前端（`web/`，无构建步骤）
 
 | 文件 | 行数 | 职责 |
 |---|---|---|
 | `index.html` | 23 | 唯一页面：挂载点 + 引入 vendored React/ReactDOM + `app-shell.js` |
-| `app-shell.js` | ~310 | 外壳：顶栏（品牌/后台任务条/日志/语言）、4 个导航页（工作台/画师/设置/向导）、全局 toast |
-| `panel.js` | ~1932 | **生图面板**（从早期插件形态 `lib/client.js` 移植 + 锚点补丁）：三栏 1:1:2、图构建器、画师、参数 |
+| `app-shell.js` | ~653 | 外壳：**四个常驻标签页**（切页只隐藏不卸载，见 §3.4）、顶栏（品牌/后台任务条/日志/语言/**v1.2.2 的「服务地址」徽标**）、全局 toast（**同文案 30 s 节流**）、**断连 banner 与 `window.__DCP_LINK__`**、画师数据桥（`__DCP_SAVE_ARTISTS__` / `__DCP_ARTIST_GROUP__` / `__DCP_CREATE_GROUP__`）+ 排障钩子 `window.__DCP_SHELL__` |
+| `panel.js` | ~2253 | **生图面板**（从早期插件形态 `lib/client.js` 移植 + 锚点补丁）：三栏 1:1:2、图构建器、画师、参数 |
 | `panel-host.js` | 60 | 给 `panel.js` 提供 `require("react")` 之类的垫片 |
 | `job-view.js` | 142 | 长任务视图：`JobProgress`（进度/速度/ETA/来源）、`openJobModal`、`BackgroundJobs`（顶栏任务条） |
 | `i18n.js` | 257 | DOM 翻译器：`ui` 词典 + 面板 `panel` 词典 + 短语规则；中英切换 |
 | `pages/workbench.js` | 60 | 工作台：单面板 + layout 切换 + 把 LLM 页 portal 进提示词栏 |
-| `pages/llm.js` | ~903 | LLM 页：对话（SSE）、推荐目录、模型管理、外接 API 设置、角色词表 |
-| `pages/artists.js` | ~264 | 画师页：收藏/黑名单/自定义、本机作品网格、搜索 |
-| `pages/settings.js` | ~416 | 设置页：ComfyUI 内外接、监听、**下载源与镜像梯队 + 镜像测速**、LLM 配置 |
+| `pages/llm.js` | ~1101 | LLM 页：对话（SSE + **思考过程块** + **历史会话侧栏**）、推荐目录、模型管理、外接 API 设置、角色词表 |
+| `pages/artists.js` | ~464 | 画师页：收藏/黑名单/自定义、分组（建/展开成员/移出/重命名/删）、本机作品网格、搜索 |
+| `pages/settings.js` | ~446 | 设置页：ComfyUI 内外接、监听、**下载源与镜像梯队 + 镜像测速**、LLM 配置 |
 | `pages/wizard.js` | ~185 | 首次运行向导：档位选择、安装进度（含"切走再切回重挂任务"） |
-| `styles/shell.css`、`pages/pages.css`、`styles/workbench.css` | 255/122/188 | 样式（**新增类名必须写进这三个文件之一**） |
-| `i18n/zh.json`、`i18n/en.json` | 780/1009 | 词典（**键集必须完全一致**，由 `check.js` 强制） |
+| `styles/shell.css`、`pages/pages.css`、`styles/workbench.css` | ~261/165/188 | 样式（**新增类名必须写进这三个文件之一**；`.tab-pane` / `.tab-hidden` 在 shell.css，`.thinking-block` / `.session-row` / **v1.2.2 的断连 banner 与「服务地址」徽标**在 pages.css） |
+| `i18n/zh.json`、`i18n/en.json` | ~845/1079 | 词典（**键集必须完全一致**，由 `check.js` 强制） |
 | `vendor/react*.js` | — | React 18.3.1 UMD（不联网、不构建） |
 
 ### 3.3 其它
@@ -113,8 +123,8 @@ curl.exe -s http://127.0.0.1:8788/app/state        # 返回 JSON，comfy.online 
 | `installer/llm-models.json` | 3 个推荐 GGUF（4B/9B/2B）+ 镜像 + sha256（**只给链接，不自动下载**） |
 | `scripts/start.ps1` | 启动器：找/下载便携 Node → 起后端 → 探活 → 开浏览器 → 托盘 |
 | `scripts/bootstrap.ps1` | 便携 Node 引导（**独立实现同一套镜像梯队 + 10 s 无进展换源**，因为此时还没有 Node 可跑） |
-| `scripts/tray.ps1` | 托盘图标与右键菜单 |
-| `scripts/check.js` | 自检（17 项，见 §4） |
+| `scripts/tray.ps1` | 托盘图标与右键菜单；**v1.2.2：退出改为"先礼后兵"** —— 先 `POST /app/quit`（6 s 超时 + 最多等后端 8 s，判据是"进程真的消失"），失败才回退 `taskkill /T /F`，两条路径最后都按 `data/run` 归属记录再清一次本程序拉起的 ComfyUI；日志用 `graceful` / `forced` / `already-stopped` 互斥文案区分 |
+| `scripts/check.js` | 自检（**19 项**，见 §4；v1.2.1 新增 **[5b] 版本号一致性**；v1.2.2 未增删自检项，仍是 19 项） |
 | `scripts/build-core.ps1` | 生成 `release\core\` + 三项交付前扫描 + 可选 `git init` |
 | `scripts/normalize-ps1.cjs` | 把 `.ps1` 规范成 UTF-8 **BOM** + CRLF 并做 PowerShell 解析校验 |
 | `assets/artists/*.txt` | 画师清单（59,676 位 + top200，MIT） |
@@ -128,6 +138,30 @@ curl.exe -s http://127.0.0.1:8788/app/state        # 返回 JSON，comfy.online 
 
 ## 4. 必须遵守的红线（改动前先读这一节）
 
+> ## ⚠️ 给后续 Agent 的第一条硬规矩：**每次改动都必须更新版本号**
+>
+> **任何一次**对代码/行为的改动（修 bug、加功能、改 UI、改接口、改文案导致界面行为变化）都**必须**在同一个回合里把版本号往前推一格，
+> 并**同时**改这三处（`check.js` 的 `[5b]` 会强制校验，三处不一致**直接自检失败**）：
+>
+> | # | 文件 | 要改的东西 |
+> |---|---|---|
+> | 1 | `server/config.js` | `const VERSION = '1.2.2';`（顶栏/接口 `/app/state` 的 `version`、`buildTag` 都由它派生） |
+> | 2 | `package.json` | `"version": "1.2.2"` |
+> | 3 | `web/panel.js` | `const BUILD_TAG = "v1.2.2";` ← **最容易漏的一处**：面板头部那个「🎨 … v1.2.2」徽标只读它 |
+>
+> **为什么必须每次改**：面板是**静态直托管、无 ?rev= 快照**的（改代码刷新即生效），所以版本号是用户与验收者判断
+> "页面加载的到底是哪一份代码"的**唯一凭据**；不推版本号就会出现"后端已是新版、顶栏还是旧版""改了但看不出改没改"。
+> v1.2.1 发版时真实踩过：只改了前两处，用户顶栏仍显示 1.2.0。
+>
+> **怎么推**：修复/小改 → 末位 +1（1.2.1 → 1.2.2）；新增功能/行为变更 → 中间位 +1（1.2.x → 1.3.0 或按你的口径）；
+> 不兼容变更 → 首位 +1。**不要**回退版本号，也不要为了"过自检"把三处改成同一个旧值。
+>
+> **同回合还要做的收尾**（属同一件事，别拆开）：
+> 1. 跑 `node scripts/check.js`，确认 **19/19**（含 `[5b]` 版本号一致性）；
+> 2. 在 `FEATURES.md` 的「文档版本记录」、`README.md` / `README.en.md` 的「文档版本记录」各加一行，写清**改了什么/为什么/边界**；
+> 3. 若改的是接口、数据文件或前端契约，同步 `docs/INTERNAL-CONTRACT.md` 与 `docs/FULL-REFERENCE.md` §8（见红线 10）；
+> 4. 发布打包时 `scripts/build-core.ps1` 的默认提交信息也带上新版本号（第 4 处，不参与自检）。
+
 | # | 红线 | 为什么 | 由谁强制 |
 |---|---|---|---|
 | 1 | **零 npm 依赖**：后端只用 Node 标准库 | "解压即用"是产品前提，装依赖=门槛 | 人工；`package.json` 的 `dependencies` 必须保持 `{}` |
@@ -140,6 +174,10 @@ curl.exe -s http://127.0.0.1:8788/app/state        # 返回 JSON，comfy.online 
 | 8 | **不随包分发权重/二进制/Python 源码** | 许可与体积（ComfyUI 是 GPL-3.0，本项目只调用不内联） | `build-core.ps1` 扫描 + `check.js` |
 | 9 | **只把必须的机器路径写进 `data/`**：外接 ComfyUI 目录只存 `data/settings.json` | 迁移时只需关注这一个文件 | 设计约定 |
 | 10 | **改接口必须同步 `docs/INTERNAL-CONTRACT.md` + `docs/FULL-REFERENCE.md` §8** | 两份文档是接手人理解系统的入口 | 人工（未进自检，靠纪律） |
+| 11 | **每次改动都必须更新版本号**（三处同改，见本节开头）：`server/config.js` 的 `VERSION`、`package.json` 的 `version`、`web/panel.js` 的 `BUILD_TAG` | 面板静态直托管、无快照机制，版本号是"页面加载的是哪一份代码"的唯一凭据；漏改就会出现"后端已是新版、顶栏还显示旧版"（v1.2.1 发版时真实踩过） | `check.js` **[5b]** 强制（三处不一致直接失败）；人工纪律负责"每次改都推一格" |
+| 12 | **常驻标签页的 key 必须稳定**：`renderPage` 传给页面的 `key` 只能是 tab id，**不能掺 `renderKey`** | `renderKey` 会在按需加载完成时自增；掺进 key 会把刚挂载的页面整体重建，"切页保留提示词/对话"当场失效 | 人工（`web/app-shell.js` 的注释里写明了原因） |
+| 13 | **面板里的 `useState` 只能追加在 hook 链末尾**（"hook 索引只增不移"） | 冒烟测试按数字索引给 `useState` 喂值，插进中间会让后续索引整体错位 | 人工（`web/panel.js` 的【冒烟红线】注释）+ 冒烟脚本 |
+| 14 | **只终止本程序拉起的 ComfyUI**（v1.2.2）：退出路径必须连带停掉它（`comfy.stopOwned` / `killOwnedSync`），清理只能依据 `data/run/comfy-owner-<pid>.json` **归属记录 + 五条谓词**（记录可解析 → 进程存活 → 命令行含 `main.py` → 命令行反推入口目录 == 记录 `codeDir`（或命令行含记录 `mainPy`）→ pid ≠ 自身），任一条不满足**只记 WARN、绝不动手**；**绝不允许**按"谁在监听 `comfy.port`"清理 | 用户自己启动的 ComfyUI 没有任何记录，按端口清理会**当场误杀**用户的实例（旧 `stop()` 就是这个行为）；反之漏清只是留一个孤儿，下次启动还能收 —— 宁可漏清，绝不误杀 | 人工 + `comfy.verifyOwnership()`；独立复核 `docs/ROUND11-VERIFY.md` §6（六条反例 + 两条红线全过） |
 
 ---
 
@@ -151,6 +189,7 @@ curl.exe -s http://127.0.0.1:8788/app/state        # 返回 JSON，comfy.online 
 | `data/artists.json` | 收藏/黑名单 | ❌ |
 | `data/llm/models.json`、`sessions.json` | LLM 模型清单、会话 | ❌ |
 | `data/characters/` | 角色词表（3.5 MB，可重下） | ❌ |
+| `data/run/comfy-owner-<pid>.json` | **v1.2.2**：ComfyUI 进程归属记录（pid + 本机绝对路径 + 启动时刻），每个本程序拉起的实例一份；退出/子进程退出时删除 | ❌（**含本机路径，别拷别传**） |
 | `data/setup.json` | 向导完成状态 | ❌ |
 | `logs/` | 服务 / ComfyUI / llama-server / 任务日志 | ❌ |
 | `runtime/` | 便携 Node、内嵌 ComfyUI（数 GB）、7-Zip、llama.cpp | ❌ |
@@ -233,7 +272,7 @@ GitHub 代理支持前缀式（`https://gh-proxy.com/`，自动补 `{url}`）、
 
 | 脚本 | 覆盖 | 基线 |
 |---|---|---|
-| `scripts\check.js`（在项目内） | 语法、JSON、词典、`.ps1`/`.cmd` 编码、脱敏 | **17/17** |
+| `scripts\check.js`（在项目内） | 语法、JSON、词典、`.ps1`/`.cmd` 编码、脱敏、**版本号一致性（`[5b]`）** | **19/19** |
 | `panel-test.cjs` | 面板纯函数与图构建器（与插件版逐字节等价） | **32/32** |
 | `round2b-alias.cjs` | 角色别名与开关 | **9/9** |
 | `round5-chars.cjs` | 角色 tag 补全 + **规范化**（含 `rem \(re:zero\)` 转义写法） | **10/10** |
@@ -266,6 +305,9 @@ GitHub 代理支持前缀式（`https://gh-proxy.com/`，自动补 `{url}`）、
 
 ## 8. 常见维护任务手册
 
+> **第 0 步（对所有任务都一样，别跳过）**：先按 §4 开头那段推版本号（`server/config.js` 的 `VERSION`、`package.json` 的 `version`、`web/panel.js` 的 `BUILD_TAG` 三处），
+> 并在 `FEATURES.md` / `README.md` / `README.en.md` 的「文档版本记录」各加一行写清改了什么。收尾跑 `check.js`（19/19，`[5b]` 会核版本号）。
+
 | 任务 | 步骤 | 坑 |
 |---|---|---|
 | **改界面文案** | 改 `web/i18n/zh.json` + `en.json` **两份** | 键集必须一致；面板文案走 `panel` 词典或 `panelPhrases` 规则；改完跑 `check.js [3]` |
@@ -273,12 +315,14 @@ GitHub 代理支持前缀式（`https://gh-proxy.com/`，自动补 `{url}`）、
 | **改默认生图型号/档位** | 改 `installer/models.json` 的 `tier`；默认型号在 `web/panel.js` 的 `INIT_MODEL`/`INIT_ROUTE` | 改完用 `GET /app/setup/plan?sel=minimal` 核对 `tiers` 三个值，并同步 README/FEATURES |
 | **加一个权重** | 在 `installer/models.json` 增一条：`id/file/dest/bytes/sha256/tier/license/officialUrl/urls/mirrors/verified/note` | `bytes` 必须精确；`sha256` 必填（下载后校验）；`dest` 只能是 `diffusion_models`/`text_encoders`/`vae` |
 | **换/加镜像源** | 改 `server/config.js` 的 `DEFAULTS.download.*`，或直接在设置页改；**先跑镜像测速** | 注意 §5"派生值不落盘"规则；`round5-mirrors.cjs` 可批量验 |
-| **加一个 HTTP 接口** | 在 `server/index.js` 对应分支加；同步 `docs/INTERNAL-CONTRACT.md` §4 与 `docs/FULL-REFERENCE.md` §8 | 面板反代路径是 `/comfy-panel/api/*`，不要往那里塞业务接口 |
+| **加一个 HTTP 接口** | 在 `server/index.js` 对应分支加；同步 `docs/INTERNAL-CONTRACT.md` §4 与 `docs/FULL-REFERENCE.md` 48 | 面板反代路径是 `/comfy-panel/api/*`，不要往那里塞业务接口 |
 | **加一个前端页面** | `web/pages/x.js` 导出默认组件 + 在 `app-shell.js` 的两张页面映射表注册 | 契约见 `docs/INTERNAL-CONTRACT.md` §1–2（props 只有 `api/put/post/t/state/settings/refresh/toast`） |
 | **改下载行为** | 只动 `download.js`；**不要**在调用方里手搓重试/换源 | 三条规则与阈值都在 `download.*`；改完跑 `round5-partial.cjs` + `round5-mirrors.cjs` |
 | **改提示词** | `assets/templates/anima-system-prompt.txt` | 与发给模型的必须逐字节一致（`llm-test.cjs` 会核） |
 | **改本地模型** | 放到 `models\llm\`，在 LLM 页「添加本机文件」或改 `data/llm/models.json` | 推荐目录 `installer/llm-models.json` **只给链接**，不自动下载 |
 | **改启动器** | `scripts/start.ps1`（UTF-8 BOM + CRLF），改完跑 `normalize-ps1.cjs` | 双击入口 `start.cmd` 是纯 ASCII + CRLF，**不要**往里加中文 |
+| **改 ComfyUI 进程 / 退出行为**（v1.2.2 新增条目） | 先读 §4 红线 14 与 `docs/INTERNAL-CONTRACT.md` §0/§4；改动点集中在 `server/comfy.js`（归属记录、五条谓词、`stopOwned` / `killOwnedSync` / `cleanupOrphans`）与 `server/index.js`（`/app/quit`、`beginQuit` / `finishQuit`、`process.on('exit')`）；托盘侧在 `scripts/tray.ps1` 的 `Stop-Backend` / `Stop-OwnedComfyUI` | ① 别把"按端口找监听进程再杀"加回来（会误杀用户实例）；② 别删/别忘删 `data/run` 归属记录；③ 改完必须实测两条路径：**优雅退出**（`POST /app/quit`）与**硬杀后重启清孤儿**（`docs/ROUND11-VERIFY.md` §5/§7 有可照抄的场景）；④ 替身请用 `node.exe`，**别用 `powershell.exe`**（它被 detached 拉起后会立刻退出，会造成假的"清理成功"） |
+| **改端口绑定行为**（v1.2.2 新增条目） | `server/index.js` 的 `listen()` / `MAX_PORT_BUMP` / `listenPort()`；实际端口只存内存 | ① 别恢复 `save({listen:{port:actual}})` 回写 —— 那正是 v1.2.2 修的"静默漂移"；② `/app/state` 顶层 `port` 必须与实际监听、与「打开：」日志、与 `DCP_READY` 四处一致；③ 启动器 `scripts/start.ps1` 的就绪探测窗口是 `base..base+20`，自增上限收紧到 2 后它仍成立，**不要**顺手去改启动器（不在本轮范围） |
 | **重新发布** | 见 §9 | `release\core` 里**不要手改**任何文件 |
 
 ---
@@ -289,7 +333,7 @@ GitHub 代理支持前缀式（`https://gh-proxy.com/`，自动补 `{url}`）、
 cd <开发副本>
 
 # ① 自检
-.\runtime\node\node.exe scripts\check.js                      # 期望 17/17
+.\runtime\node\node.exe scripts\check.js                      # 期望 19/19（含 [5b] 版本号一致性）
 
 # ② 生成干净拷贝 + 三项扫描（隐私/权重/GPL）+ 可选 git 提交
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-core.ps1
@@ -308,9 +352,11 @@ cd <验收脚本目录的上一级>
 ```
 
 注意：
+- **发布前必须已经推过版本号**（§4 开头那段：`server/config.js` / `package.json` / `web/panel.js` 三处 +
+  `build-core.ps1` 里的默认提交信息）。别等打包时再补 —— 那正是 v1.2.1 漏掉面板 `BUILD_TAG` 的成因。
 - `build-core.ps1` 会**先删掉整个 `release\core`**（含 `.git`），所以想保留历史必须用 `-GitInit` 重建，或先备份 `.git`。
 - 交付目录里**不允许**出现 `runtime/ models/ data/ logs/`：跑过 `start.cmd` 就会生成它们，发布前清掉。
-- 四份文档的文末版本表要**同时**加一行：`README.md` §14、`FEATURES.md`、`MIGRATION.md`、`docs/FULL-REFERENCE.md`。
+- 文档文末的版本表要**同时**加一行：`README.md`、`README.en.md`、`FEATURES.md`、`MIGRATION.md`、`docs/FULL-REFERENCE.md`（`docs/HANDOVER.md` 的 §13 变更摘要也顺手加一条）。
 
 ---
 
@@ -360,14 +406,16 @@ cd <验收脚本目录的上一级>
 | Qwen-Image 2.1 系 | `Qwen-Research`（仅研究/非商业，商用需单独授权） |
 | 画师清单 | MIT（见 `assets/artists/NOTICE.md`） |
 | LLM 推荐模型 | Apache-2.0（可商用）。**只给链接，不随包分发** |
-| 再分发义务 | 若把本项目与权重一起分发，必须同时带上 `LICENSES/` 与 `THIRD_PARTY.md`；README §12 有分区表与要点 |
+| 再分发义务 | 若把本项目与权重一起分发，必须同时带上 `LICENSES/` 与 `THIRD_PARTY.md`；README 412 有分区表与要点 |
 
 ---
 
-## 13. 七轮变更摘要（从哪来的、为什么长这样）
+## 13. 历轮变更摘要（从哪来的、为什么长这样）
 
 | 轮次 | 主题 |
 |---|---|
+| 11 | **v1.2.2（第十一轮）**：①**退出即停**：新增 `POST /app/quit`（停本程序拉起的 ComfyUI → 停 LLM → 关 HTTP → 落盘 → 退出，重复/并发调用只收尾一次），`SIGINT/SIGTERM/SIGBREAK` 走同一套，`process.on('exit')` 加**纯同步**兜底 `killOwnedSync`；托盘退出改"先礼后兵"（先 `POST /app/quit`，6 s 超时 + 最多等 8 s，失败才回退 `taskkill /T /F`，两条路径最后都按归属记录再清一次）。②**只清自己的**：新增进程归属记录 `data/run/comfy-owner-<pid>.json`（launch 成功即写、子进程退出即删）+ 五条谓词；启动时 `cleanupOrphans()` 只清自己写过的记录；删除旧 `stop()` 里"按 `comfy.port` 找监听者"的兜底（它会误杀用户自己启动的实例），非本程序拉起的实例改为回报 `owner=foreign` 并跳过。③**孤儿真因（实测纠正）**：孤儿不是 detached 逃逸 —— 父进程还活着时 `taskkill /T` 能连 detached 子进程一起收；真因是**父链断裂**（`scripts/start.ps1` 的 `$proc.Kill()` 是单进程杀，控制台被强杀时中间那层 node 先死），外加旧 `listen()` 在 EADDRINUSE 自增时**重复注册就绪回调**导致 `autoStart` 一次拉起 3 个 ComfyUI 而内存只记住最后一个 pid（本轮一并修掉）。④**端口不漂移**：`MAX_PORT_BUMP=2`、每次 WARN、超限 `log.error` + `DCP_PORT` 建议 + `exit 1`；**取消**端口回写，实际端口只存内存并由 `/app/state` 顶层 `port` 自证。⑤**前端不刷屏**：顶栏「服务地址」徽标（取值链 顶层 `port` → `listen.port` 兜底 → 不渲染；非法值一律当缺失）；断连只在"连通→断连"跳变画**一条**可操作 banner，恢复即消失，首帧连不上改为 5 s 轻探自愈；同文案 error toast 30 s 节流；`__DCP_SAVE_ARTISTS__` 单飞+按 key 合并、只在真变更时广播（空闲自我回声实测从约 166 次/秒降到 0~1 次/22 s）。⑥版本号三处 → `v1.2.2`。**独立复核**：`check.js` pass=19 fail=0、后端 harness 105/105、前端无头 Edge 45/45（`docs/ROUND11-VERIFY.md`）。 |
+| 10 | **v1.2.1（第十轮）**：①**切页保留状态** —— 导航改成四个常驻标签页，工作台切走时只隐藏不卸载（修掉"切到设置就失去提示词与 LLM 历史"；根因是页面 key 掺了 `renderKey`，按需加载完成时把刚挂载的页面整体重建），后台标签页跳过轮询 + 幂等 GET 瞬时失败重试；②**画师分组补齐** —— 收藏/黑名单 chip 与**生图面板内**（下拉行 / 已选 chip / 分组随机块）都能加组，分组卡片可展开成员、移出成员、重命名；按 key 传/按 key 写修掉"面板挂载清空分组"，新增 `POST /app/artists/groups/replace`；③**外接 API 思考过程可见 + 复制可靠** —— 新增 `reasoning` 帧与「🧠 思考过程」块（与正文分离、可折叠可单独复制），复制按钮不再依赖解析成功，修掉 `setLast` 打在 system 帧上导致助手气泡恒空；④**历史永久保留** —— `新建会话` 不再删会话、新增 `GET /app/llm/sessions` + `DELETE /app/llm/session/:id` + `lastSessionId` 自动接回，`keepMessages` 上限 200 → 2000；⑤版本号 → `v1.2.1`（`server/config.js` 的 `VERSION` 与 `package.json`）。 |
 | 1 | 从早期插件形态派生出独立项目：零依赖后端、静态前端、可拷贝迁移、向导、F1–F5 功能、四份文档、核心版打包 |
 | 2 | 三合一工作台、角色词表 + 563 条中文别名、外接 API（纯聊天内核）、ModelScope/国内优选源、托盘 |
 | 3 | 外接 API 修复（思考型模型吃光 token → 关思考）、工作台 1:1:2、**画师 UI 独立成页**、默认模型改 `anima-turbo-v1.1`、本地模型只留 4B |
@@ -380,6 +428,43 @@ cd <验收脚本目录的上一级>
 
 ---
 
+## 13.1 v1.2.1 的验收方式与已知边界（如实记录）
+
+**怎么验的**
+
+- **服务端**：起一个临时实例（`node server/index.js`，会占用下一个空闲端口，例如 8791→8794），逐条打接口：`GET /app/llm/sessions`、`POST /app/llm/session/new`（验证**不删**旧会话）、`DELETE /app/llm/session/:id`、`GET /app/llm/session/new`（必须 400）、`POST /app/artists/groups/replace`；外接 API 用测试 Key 实测 `reasoning=off` 与 `reasoning=low` 两种挡位，确认 `reasoning` 帧只带思考文本、`delta` 帧只带正文。
+- **真实出图**：把 `comfy.mode=external` / `comfy.dir` 临时指向 `D:\FFOutput\COMFY UI 日常使用版\COMFY UI\runtime\comfyui`（`detectLayout` 报 `portable`），用该目录的 `anima-turbo-v1.1.safetensors` + `qwen_3_06b_base.safetensors` + `qwen_image_vae.safetensors` 出图：**成功**，1024×1024 PNG、1.4 MB、28.3 s（10 步 / CFG 1 / er_sde+simple），落在日常版的 `output/v121-accept/`。测完 `POST /app/comfy/stop`、删掉测试输出目录、把 `comfy` 段还原成 `embedded` + 空 `dir`。**日常版目录除那一个测试输出子目录（已删）外零改动。**
+- **前端**：Edge（`--headless=new` + CDP）跑页内断言：`.tab-panes` 常驻、切设置后工作台仍在 DOM 且被隐藏、切回来提示词原样、`.session-row` 历史列表与自动接回、画师页分组卡片与展开/重命名入口、分组桥写回。
+
+**已知边界（如实在此记录）**
+
+- 自动化脚本偶发两条不稳定断言（`画师页正常挂载` / `分组条目可展开`）：第一次切到「画师」时，浏览器对 `import('./pages/artists.js')` 的**去重 promise** 偶尔长时间不 settle，界面停在「加载中…」；再切一次即正常（多次复现均为**第二次访问必成功**）。同一个浏览器会话里对同一 URL 用 `import(..., {})` 显式重新请求也能立刻成功 —— 属于 Chromium 侧的动态导入去重行为，不是本项目的逻辑缺陷；实现侧已把按需加载显式去重（`pageInflight`）并在排障钩子 `window.__DCP_SHELL__` 里暴露 `inflight`/`cached`/`bootSeq`/`trail`，便于以后一眼确认。
+- 该脚本还会偶发一次 `TypeError: Failed to fetch`（真机空载时从未复现，出现在 4 个 Node 实例 + WebSocket 3000 ms 重连 + CDP 高频求值的压力环境下）。为此加了 `fetchRetry`（幂等 GET 重试 3 次）与对话 POST 的单次发送重试；服务端日志同期**没有任何 ERROR**。
+
+---
+
+## 13.2 v1.2.2 的验收方式与已知边界（如实记录）
+
+**怎么验的**（全部由**独立复核者**自建 harness 实测，见 `docs/ROUND11-VERIFY.md`，不用实现者的脚本）
+
+- **沙箱法**：把 `server/ web/ installer/ package.json` 拷到 `%TEMP%` 下的临时目录跑，`data/` 与 `logs/` 现建 —— **不碰开发副本正在运行的实例与 `data/settings.json`**（本轮开发机上有一个常驻后端，端口与设置文件都不能被劫持）。
+- **端口**：占住 18960/18961 → 恰好 2 条 WARN（`… 尝试 18961（第 1/2 次自增）`）→ 绑定 18962；`/app/state` 顶层 `port` == 「打开：」== `DCP_READY` == 实际监听（四处一致），且磁盘 `settings.json` **字节级未变**；占满 3 个端口 → 2 条 WARN 后明确报错 + `exit 1`，不输出假就绪。
+- **退出入口**：`POST /app/quit` 连续两次、并发三次全部 `200 / ok=true`，`first` 只有一个 `true`，随后进程 `exit 0` + 端口释放 + 日志落盘「退出收尾完成」。
+- **退出连带停止**：真实 `launch()` 拉起的替身，且刻意做成"**活着但离线**"（不监听端口）—— 旧实现会 early-return，现在照样被终止、记录被删。
+- **跨进程孤儿**：短命 helper 用 detached 拉起替身后退出（实测该 pid 的 `ppid` 进程已不存在，**父链真断**）→ 启动后端时被 `cleanupOrphans` 带走并删记录，日志点名 pid。
+- **硬边界三层**（逐层实测）：① 托盘优雅退出（后端自行 `exit 0`）；② 托盘强杀后按归属记录清理（顽固后端 `/app/quit` 返 500 → 8 s 后回退 `/T /F`，记录里的替身仍被清掉）；③ 下次启动清孤儿。另实测"**不带 `/T`** 直接对后端本进程 `taskkill /F`" → 替身存活（证明进程内兜底确实跑不到）→ 重启后被清且日志点名该 pid。
+- **安全边界**：六条反例 + 两条红线全过 —— 无归属记录的用户实例（`/app/comfy/stop` 与 `/app/quit` 之后都仍然活着，且不被写入记录）、`codeDir` 不符、命令行没有 `main.py`、`schema` 未知、坏 JSON、死 pid、读不到命令行（PATH 里塞假的 `powershell`）→ **全部不清理并留 WARN**。
+- **前端**：无头 Edge + 真后端/桩后端；断连期间提示条恒 1、toast 恒 0、`__DCP_LINK__.count` 递增而 DOM 不重画，恢复后自行消失；同文案失败 25 次 → 1 条 toast + `suppressedToasts=24`；`fetchRetry` 的 GET 3 次重试与页面 key 契约未动。
+- **口径**：`node scripts/check.js` → **pass=19 fail=0**；后端 harness **105/105**（10 块）；前端无头 Edge **45/45**。（实现者自建 harness 的断言数不作为裁决证据。）
+
+**已知边界（本轮不修，如实记录）**
+
+- **A) 面板侧回声写法仍在**：`web/panel.js` 的 `[state]` 保存 effect 与 `onChanged` 造新数组这两处仍在，本轮只从**外壳侧**（`__DCP_SAVE_ARTISTS__` 单飞 + 只在真变更时广播）断开回声；面板侧加固留待后续轮次。
+- **B) 面板 NaN 渲染**：`/system_stats` 缺 `system` 时面板会渲染「内存 NaN / ? GB」，属**既有行为**、非本轮引入，本轮不修。
+- **C) `scripts/start.ps1:141 / :206` 的 `$proc.Kill()` 仍是单进程杀**：控制台窗口被强杀时可能遗留后端与 ComfyUI；本轮不修启动器，后果由"下次启动 `cleanupOrphans`"兜住（已实测有效）。
+- **D) 直接对后端本进程 `taskkill /F` 时进程内兜底无法执行**：这是 Windows 硬边界（`/F` = `TerminateProcess`，不给 node 任何执行机会），不是缺陷；由四层防护覆盖。
+- **E) 绕过共享存储直接调外壳写入口时**，面板会按旧快照回写覆盖改动；真实 UI 路径都会先同步 `window.__DCP_ARTISTS__`，故不是缺陷，属 A 的另一种表现。
+
 ## 14. 名词表
 
 | 词 | 含义 |
@@ -391,5 +476,8 @@ cd <验收脚本目录的上一级>
 | 主源 / 兜底源 | 梯队前面的快源 / 最后只按"停滞"判的源 |
 | job | 服务端长任务（下载/安装），有 id、事件流与状态，切页面不中断 |
 | 面板半 / panel.js | 从早期插件形态移植的生图面板（含图构建器），前端最大单文件 |
-| 红线 | §4 的 10 条不可违反的约定 |
+| 红线 | §4 的 14 条不可违反的约定 |
+| 归属记录 / owner record | `data/run/comfy-owner-<pid>.json`：本程序给"自己拉起的 ComfyUI"写的身份证（pid + 入口目录 + 启动时刻）。清理只能依据它 + 五条谓词；用户自己启动的实例没有它，永远不在候选里 |
+| 孤儿 / orphan | 本程序拉起过、但父链已断（中间那层 node 先死）而活到现在的 ComfyUI。识别它的唯一依据是归属记录；`state.pid` 对跨进程孤儿永远是空的 |
+| 优雅退出 / 先礼后兵 | 托盘退出时先 `POST /app/quit` 让后端自己停 ComfyUI 与 LLM、关 HTTP、落盘后退出；失败才回退 `taskkill /T /F`。为什么不能只强杀：`/F` 不给 node 任何执行机会 |
 | 验收脚本目录 | 存放 `round*.cjs` / `probe-*` 的目录，不随包发布但必须交接 |

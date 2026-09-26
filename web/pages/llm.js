@@ -88,6 +88,14 @@ export default function LlmPage(props) {
   const [sendContext, setSendContext] = useState(false);
   const [reasoning, setReasoning] = useState('off');
   const [streaming, setStreaming] = useState(false);
+  // v1.2.1（需求 3）：思考过程必须能看见 —— 累积的思考文本、是否展开、是否仍在思考。
+  const [thinking, setThinking] = useState('');
+  const [thinkOpen, setThinkOpen] = useState(true);
+  const [thinkStreaming, setThinkStreaming] = useState(false);
+  // v1.2.1（需求 5）：历史会话列表（只给摘要；正文按需拉取）
+  const [sessions, setSessions] = useState([]);
+  const [histBusy, setHistBusy] = useState('');
+  const [histErr, setHistErr] = useState('');
   const [runtime, setRuntime] = useState(null);      // /app/llm/status
   const [models, setModels] = useState(null);        // {items, dir}
   const [promptOpen, setPromptOpen] = useState(false);
@@ -115,9 +123,14 @@ export default function LlmPage(props) {
   const [aliasTag, setAliasTag] = useState('');
 
   const mounted = useRef(true);
-  const sessionId = useRef('s' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8));
+  // v1.2.1（需求 5）：默认会话 id 固定为 'default'，刷新/重开程序都接得上同一段历史。
+  // 旧实现是随机 id —— 每次重挂载都是"新会话"，用户永远看不到上一次聊了什么。
+  const sessionId = useRef('default');
   const streamCtl = useRef(null);
   const logRef = useRef(null);
+  // 本轮是否已经拿到「权威正文」（服务端的 replace / answer）。一旦拿到，流式累积值就不能再覆盖它。
+  const authoritative = useRef(false);
+  const thinkBuf = useRef('');
 
   useEffect(() => {
     mounted.current = true;
@@ -132,6 +145,35 @@ export default function LlmPage(props) {
     if (mounted.current) setErr(msg);
     toast && toast(msg, 'error');
   }, [toast, t]);
+
+  /** 会话里的消息 → 界面消息（忽略空内容的占位、过滤非法角色）。 */
+  const toViewMessages = useCallback((raw) => (Array.isArray(raw) ? raw : [])
+    .filter((m) => m && (m.role === 'user' || m.role === 'assistant' || m.role === 'system')
+      && typeof m.content === 'string' && m.content)
+    .map((m) => ({ role: m.role, content: m.content })), []);
+
+  const loadSessions = useCallback(async () => {
+    try {
+      const r = await api('/app/llm/sessions');
+      if (mounted.current) setSessions((r && r.items) || []);
+      return r || { items: [], lastSessionId: '' };
+    } catch (e) { fail(e); return { items: [], lastSessionId: '' }; }
+  }, [api, fail]);
+
+  /** 载入某个会话的整段历史（点列表条目用；不传 id 就载入服务端记的「上一次会话」）。 */
+  const loadSession = useCallback(async (id) => {
+    const target = String(id || '').trim();
+    if (!target) return;
+    try {
+      const r = await api('/app/llm/session/' + encodeURIComponent(target));
+      if (!mounted.current) return;
+      sessionId.current = target;
+      setMessages(toViewMessages(r && r.messages));
+      setThinking('');
+      setThinkStreaming(false);
+      setErr('');
+    } catch (e) { fail(e); }
+  }, [api, fail, toViewMessages]);
 
   // ── 数据加载 ────────────────────────────────────────────
 
@@ -231,6 +273,13 @@ export default function LlmPage(props) {
     loadModels();
     loadCatalog();
     loadCharStatus();
+    // v1.2.1（需求 5）：挂载即拉历史列表，并**自动接回上一次的对话**（刷新、切页、重开程序都接得上）。
+    // 只在界面还是空的时候接回：切页回来（工作台常驻）时界面里已经有内容，不会被覆盖。
+    (async () => {
+      const r = await loadSessions();
+      const last = (r && r.lastSessionId) || '';
+      if (last && mounted.current) await loadSession(last);
+    })();
     if (stateContext !== null) {
       setContextMessages(stateContext);
       return undefined;
@@ -244,7 +293,13 @@ export default function LlmPage(props) {
       } catch (e) { fail(e); }
     })();
     return () => { alive = false; };
-  }, [api, fail, loadModels, loadStatus, loadCatalog, loadCharStatus, stateContext]);
+  }, [api, fail, loadModels, loadStatus, loadCatalog, loadCharStatus, stateContext, loadSessions, loadSession]);
+
+  // 思考文本变长时自动滚到底（与消息列表同一套行为）
+  useEffect(() => {
+    const el = logRef.current;
+    if (el && thinking) el.scrollTop = el.scrollHeight;
+  }, [thinking]);
 
   useEffect(() => {
     const el = logRef.current;
@@ -296,15 +351,32 @@ export default function LlmPage(props) {
 
     let acc = '';
     let ctl = null;
+    // 本轮重置：思考缓冲与「已拿到权威正文」标志
+    authoritative.current = false;
+    thinkBuf.current = '';
+    setThinking('');
+    setThinkStreaming(false);
     try {
       ctl = new AbortController();
       streamCtl.current = ctl;
-      const res = await fetch('/app/llm/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-        signal: ctl.signal,
-      });
+      // v1.2.1：只对"发送请求"这一步做一次瞬时网络失败重试（连接被复用/半开被掐）。
+      // 流开始之后不再重试 —— 否则会在界面上留下两份半截回答。
+      let res = null;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          res = await fetch('/app/llm/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+            signal: ctl.signal,
+          });
+          break;
+        } catch (e) {
+          if (e && e.name === 'AbortError') throw e;
+          if (attempt === 0) { await new Promise((r) => setTimeout(r, 250)); continue; }
+          throw e;
+        }
+      }
       if (!res.ok) {
         let msg = 'HTTP ' + res.status;
         try { const j = await res.json(); if (j && j.error) msg = j.error; } catch { /* 非 JSON 响应体 */ }
@@ -318,14 +390,29 @@ export default function LlmPage(props) {
       let done = false;
       let contextUsed = null;
 
-      const setLast = (patch) => {
+      // v1.2.1（需求 3 的关键修复）：不再"改数组最后一条"，而是**定位最后一条 assistant 消息**。
+      // 旧写法在收到 charactersAdded/charactersFixed/note 时会 concat 一条 role:"system" 说明，
+      // 之后所有 replace/delta 都打在那条说明上 —— 助手气泡永远停在空字符串，
+      // 于是「复制正/负」「复制整段回复」全部置灰（用户报的"生成内容无法一键复制"）。
+      const setAssistant = (patch) => {
         if (!mounted.current) return;
         setMessages((prev) => {
-          if (!prev.length) return prev;
-          const copy = prev.slice();
-          copy[copy.length - 1] = Object.assign({}, copy[copy.length - 1], patch);
-          return copy;
+          for (let i = prev.length - 1; i >= 0; i--) {
+            if (prev[i] && prev[i].role === 'assistant') {
+              const copy = prev.slice();
+              copy[i] = Object.assign({}, copy[i], patch);
+              return copy;
+            }
+          }
+          return prev.concat([Object.assign({ role: 'assistant', content: '' }, patch)]);
         });
+      };
+      // 思考文本：累积到 ref，再写进 state（同一帧里可能既有 reasoning 又有 delta）
+      const pushThinking = (chunk) => {
+        if (!chunk) return;
+        thinkBuf.current += chunk;
+        if (!mounted.current) return;
+        setThinking(thinkBuf.current);
       };
 
       while (!done) {
@@ -346,17 +433,20 @@ export default function LlmPage(props) {
               // 后端会把回答规范成"单代码围栏 + 去重后的正负向"；有 replace 就以它为准。
               if (typeof data.replace === 'string' && data.replace) {
                 acc = data.replace;
-                setLast({ content: acc });
+                authoritative.current = true;
+                setAssistant({ content: acc });
               }
               if (typeof data.answer === 'string' && data.answer) {
                 acc = data.answer;
-                setLast({ content: acc });
+                authoritative.current = true;
+                setAssistant({ content: acc });
               }
               continue;
             }
             if (data && typeof data.replace === 'string') {
               acc = data.replace;
-              setLast({ content: acc });
+              authoritative.current = true;
+              setAssistant({ content: acc });
               // 同一帧里可能还带着"角色词表补全/规范化"的说明（后端把 replace 与 charactersAdded 合并发了）
               if (Array.isArray(data.charactersAdded) && data.charactersAdded.length) {
                 setMessages((prev) => prev.concat([{
@@ -370,6 +460,17 @@ export default function LlmPage(props) {
                   content: t('llm.characters.fixed') + '：' + data.charactersFixed.map((x) => `${x.from} → ${x.to}`).join('；'),
                 }]));
               }
+              continue;
+            }
+            // v1.2.1（需求 3）：思考文本（与正文完全分开的一个字段），累积后单独渲染成「思考过程」块。
+            if (data && typeof data.reasoning === 'string') {
+              setThinkStreaming(true);
+              pushThinking(data.reasoning);
+              continue;
+            }
+            // 兼容旧服务端：只有思考字符数时，至少把"正在思考"标出来
+            if (data && typeof data.thinking === 'number') {
+              setThinkStreaming(true);
               continue;
             }
             if (data && typeof data.note === 'string') {
@@ -392,43 +493,88 @@ export default function LlmPage(props) {
               continue;
             }
             if (data && typeof data.delta === 'string') {
-              acc += data.delta;
-              setLast({ content: acc });
+              // 已经拿到权威正文（服务端的 replace/answer）后，流式累积值不能再覆盖它 ——
+              // 否则"复制整段回复"拿到的会是规范化之前的旧文本（本轮修的另一半）。
+              if (!authoritative.current) {
+                acc += data.delta;
+                setAssistant({ content: acc });
+              }
             }
           }
         }
       }
       if (mounted.current) {
-        setLast(contextUsed === null ? { content: acc } : { content: acc, meta: contextUsed });
+        // 有权威正文就保留它；没有才落回流式累积值。
+        setAssistant(contextUsed === null
+          ? {}
+          : { meta: contextUsed });
       }
     } catch (e) {
       if (e && e.name === 'AbortError') return;
       if (mounted.current) {
         setMessages((prev) => {
           if (!prev.length) return prev;
-          const last = prev[prev.length - 1];
-          if (!last || last.role !== 'assistant') return prev;
           const copy = prev.slice();
-          copy[copy.length - 1] = { role: 'system', content: (e && e.message) || t('toast.failed') };
-          return copy;
+          for (let i = copy.length - 1; i >= 0; i--) {
+            const m = copy[i];
+            if (m && m.role === 'assistant') {
+              // 只把「一条正文都没有」的助手占位换成错误说明；已有内容的回答绝不销毁
+              if (!String(m.content || '').trim()) copy[i] = { role: 'system', content: (e && e.message) || t('toast.failed') };
+              return copy;
+            }
+          }
+          return copy.concat([{ role: 'system', content: (e && e.message) || t('toast.failed') }]);
         });
       }
       fail(e);
     } finally {
+      // 流式收尾：思考标记与后台任务引用一起归位（无论成功、失败还是中止）
+      if (mounted.current) {
+        setThinkStreaming(false);
+        // 没有思考文本就不要留一个空的「思考过程」块
+        if (!thinkBuf.current) setThinking('');
+      }
       streamCtl.current = null;
       if (mounted.current) setStreaming(false);
     }
   }, [api, draft, fail, messages, notReady, notReadyMsg, streaming, toast, t]);
 
+  /**
+   * v1.2.1（需求 5）：新建对话 = 开一个新会话，**不删除任何旧会话**。
+   * 旧实现调 /app/llm/session/new（后端 dropSession）——用户一新建，历史就没了。
+   */
   const newSession = useCallback(async () => {
+    if (streamCtl.current) { try { streamCtl.current.abort(); } catch { /* 已结束 */ } }
+    const id = 't' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     try {
-      await api('/app/llm/session/new', { method: 'POST', body: { sessionId: sessionId.current } });
-      if (streamCtl.current) { try { streamCtl.current.abort(); } catch { /* 已结束 */ } }
-      sessionId.current = 's' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-      if (mounted.current) { setMessages([]); setStreaming(false); setErr(''); }
+      await api('/app/llm/session/new', { method: 'POST', body: { sessionId: id } });
+      sessionId.current = id;
+      if (mounted.current) {
+        setMessages([]); setStreaming(false); setErr('');
+        setThinking(''); setThinkStreaming(false);
+      }
+      await loadSessions();
       toast && toast(t('toast.done'), 'ok');
     } catch (e) { fail(e); }
-  }, [api, fail, toast, t]);
+  }, [api, fail, loadSessions, toast, t]);
+
+  /** v1.2.1（需求 5）：删除一条历史会话（两步确认由 UI 负责）—— 只有用户主动点才会真的删。 */
+  const deleteSession = useCallback(async (id) => {
+    const target = String(id || '').trim();
+    if (!target) return;
+    setHistBusy('del:' + target);
+    setHistErr('');
+    try {
+      await api('/app/llm/session/' + encodeURIComponent(target), { method: 'DELETE' });
+      const r = await loadSessions();
+      if (sessionId.current === target) {
+        const next = (r && r.lastSessionId) || '';
+        if (next) await loadSession(next);
+        else if (mounted.current) { setMessages([]); setThinking(''); }
+      }
+      toast && toast(t('llm.sessions.deleted'), 'ok');
+    } catch (e) { setHistErr(e.message); fail(e); } finally { if (mounted.current) setHistBusy(''); }
+  }, [api, fail, loadSession, loadSessions, toast, t]);
 
   // ── 一键填入 / 一键复制（桥由外壳提供，这里只调用） ───────
   // 解析对象在渲染期算出，供预览框与按钮共用（每次回复变化都会重算）。
@@ -594,6 +740,35 @@ export default function LlmPage(props) {
   const items = (models && models.items) || [];
   const hits = (results && results.items) || [];
 
+  /**
+   * v1.2.1（需求 3）：思考过程块。与正文**完全分开**渲染 —— 思考永远不会混进回答，
+   * 用户既能看见模型在"想什么"，也能单独把思考复制走；折叠状态只是显示层。
+   */
+  const thinkingBlock = (text, isStreaming) => {
+    const body = String(text || '');
+    if (!body && !isStreaming) return null;
+    const chars = body.length;
+    return h('div', { className: 'thinking-block' },
+      h('div', { className: 'thinking-head' },
+        h('span', { className: 'thinking-title' },
+          '🧠 ' + t('llm.thinking.title') + '（' + chars + ' ' + t('llm.thinking.chars') + '）'
+          + (isStreaming ? ' · ' + t('llm.thinking.streaming') : '')),
+        h('span', { className: 'sp' }),
+        h('button', {
+          className: 'btn tiny ghost',
+          disabled: !body,
+          onClick: () => copyText(body, t('llm.thinking.title')),
+        }, t('llm.thinking.copy')),
+        h('button', {
+          className: 'btn tiny ghost',
+          onClick: () => setThinkOpen((v) => !v),
+        }, t(thinkOpen ? 'llm.thinking.hide' : 'llm.thinking.show'))),
+      thinkOpen
+        ? h('div', { className: 'thinking-body' },
+          body || h('span', { className: 'muted' }, t('llm.thinking.waiting')))
+        : null);
+  };
+
   const chatCard = h('div', { className: 'card' },
     h('div', { className: 'chat' },
       h('div', { className: 'chat-log', ref: logRef },
@@ -610,14 +785,20 @@ export default function LlmPage(props) {
               title: t('llm.copyOne'),
               onClick: () => copyText(String(m.content || '')),
             }, t('llm.copyOne'))),
+          // v1.2.1（需求 3）：思考过程渲染在正文**之前**、且是独立的一块 —— 正文与思考互不污染。
+          // 只有"最后一条助手消息、且正在流式"时才把思考块挂在这条上（历史里不重复显示思考）。
+          (m.role === 'assistant' && i === messages.length - 1 && (thinking || thinkStreaming))
+            ? thinkingBlock(thinking, thinkStreaming)
+            : null,
           h('div', { className: 'msg-body' }, m.content),
           typeof m.meta === 'number'
             ? h('div', { className: 'msg-meta' }, t('llm.contextCount') + ': ' + m.meta)
             : null))
           : h('div', { className: 'msg system' }, t('common.none'))),
+      // 内容为空时不显示"生成中"的进度条式提示；有思考文本时思考块已经说明了状态。
       streaming
         ? h('div', { className: 'row tight' },
-          h('span', { className: 'muted' }, t('common.loading')),
+          h('span', { className: 'muted' }, (thinking || thinkStreaming) ? t('llm.thinking.streaming') : t('common.loading')),
           h('button', {
             className: 'btn tiny',
             onClick: () => { if (streamCtl.current) { try { streamCtl.current.abort(); } catch { /* 已结束 */ } } },
@@ -681,14 +862,51 @@ export default function LlmPage(props) {
       () => copyText(parsed ? parsed.negative : '', t('llm.fillNegative')), () => fill('negative')),
     h('div', { className: 'row tight', style: { marginTop: 6 } },
       h('button', { className: 'btn primary', disabled: !parsed, onClick: () => fill('both') }, t('llm.fillBoth')),
+      // v1.2.1（需求 3）：复制按钮只要**有回答**就能用 —— 旧写法依赖解析成功，
+      // 模型没按围栏格式回答时（或思考型模型只给了一段文本）用户就完全复制不了。
       h('button', {
-        className: 'btn', disabled: !parsed,
-        onClick: () => copyText(parsed ? `Positive prompt: ${parsed.positive}\n\nNegative prompt: ${parsed.negative}` : '', t('llm.copyBoth')),
+        className: 'btn', disabled: !lastAnswer,
+        onClick: () => copyText(parsed ? `Positive prompt: ${parsed.positive}\n\nNegative prompt: ${parsed.negative}` : lastAnswer, t('llm.copyBoth')),
       }, t('llm.copyBoth')),
       h('button', {
         className: 'btn', disabled: !lastAnswer,
         onClick: () => copyText(lastAnswer, t('llm.copyReply')),
       }, t('llm.copyReply'))));
+
+  /**
+   * v1.2.1（需求 5）：历史会话卡片。列表来自 GET /app/llm/sessions（只有摘要），
+   * 点条目载入整段；「删除」是唯一会真的删历史的入口（用户要求：除非主动删除，否则永久保留）。
+   */
+  const histCard = h('div', { className: 'card' },
+    h('div', { className: 'row' },
+      h('div', { className: 'card-title' }, t('llm.sessions.title')),
+      h('span', { className: 'sp' }),
+      h('span', { className: 'count' }, String(sessions.length)),
+      h('button', { className: 'btn tiny', onClick: loadSessions }, t('common.refresh'))),
+    h('div', { className: 'hint' }, t('llm.sessions.hint')),
+    histErr ? h('div', { className: 'warn' }, histErr) : null,
+    sessions.length
+      ? h('div', { className: 'list list-scroll', style: { marginTop: 6, maxHeight: 220 } },
+        sessions.map((s) => h('div', { className: 'list-row session-row', key: 'se' + s.id },
+          h('button', {
+            className: 'session-pick' + (s.id === sessionId.current ? ' on' : ''),
+            title: t('llm.sessions.open') + '：' + s.id,
+            onClick: () => loadSession(s.id),
+          },
+            h('span', { className: 'name', title: s.preview || s.id },
+              (s.id === sessionId.current ? '● ' : '') + (s.preview || s.id)),
+            h('span', { className: 'muted' }, String(s.messages) + ' ' + t('llm.sessions.count')
+              + (s.updatedAt ? ' · ' + String(s.updatedAt).replace('T', ' ').slice(5, 16) : ''))),
+          h('button', {
+            className: 'btn tiny danger',
+            disabled: histBusy === 'del:' + s.id,
+            title: t('llm.sessions.deleteConfirm'),
+            onClick: () => {
+              if (window.confirm(t('llm.sessions.deleteConfirm') + '\n' + (s.preview || s.id))) deleteSession(s.id);
+            },
+          }, t('llm.sessions.delete')))))
+      : h('div', { className: 'muted' }, t('llm.sessions.empty')));
+
 
   const left = h('div', { className: 'llm-main' },
     // v1.0.1：嵌入式（工作台提示词栏）里不再重复大标题，把纵向空间留给对话与工具按钮。
@@ -754,6 +972,9 @@ export default function LlmPage(props) {
         t('llm.ctx.toggle')),
       h('div', { className: 'hint' }, t('llm.ctx.hint')),
       h('div', { className: 'hint' }, t('llm.provider.hint'))),
+
+    // v1.2.1（需求 5）：历史会话（永久保留，除非用户主动删除）
+    histCard,
 
     // 推荐模型（给链接为主；本机已有就不再下载）
     h('div', { className: 'card' },

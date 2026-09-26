@@ -121,6 +121,78 @@ function redactSettings(s) {
   return out;
 }
 
+// ── 实际监听端口与优雅退出 ────────────────────────────────
+
+// v1.2.2（R4）：实际监听端口只活在内存里，**绝不回写** data/settings.json。
+// 旧实现在 EADDRINUSE 时一路 +1（上限 20）并把漂移值写回设置，于是"设置里的端口"被悄悄改掉，
+// 停在旧端口的标签页永远打不到后端 → 满屏"操作失败：Failed to fetch"。
+let actualPort = null;
+
+/** 本程序实际监听的端口（监听前回落到配置值，供 /app/state 在极端时序下也不返回 null）。 */
+function listenPort() {
+  if (actualPort !== null) return actualPort;
+  const env = Number.parseInt(process.env.DCP_PORT, 10);
+  if (Number.isFinite(env) && env > 0) return env;
+  return load().listen.port;
+}
+
+const quit = { promise: null, calls: 0, finishing: false, startedAt: 0 };
+
+/**
+ * 收尾第一步：停**本程序拉起的** ComfyUI → 停本地 LLM 运行时。
+ * 并发/重复调用共用同一次执行（quit.promise 只会被建一次），绝不会做两遍。
+ */
+function beginQuit(reason) {
+  quit.calls += 1;
+  if (!quit.promise) {
+    quit.startedAt = Date.now();
+    log.info(`收到退出请求（${reason}），开始收尾…`);
+    quit.promise = (async () => {
+      const out = { reason, calls: quit.calls, comfy: null, llm: null };
+      try {
+        out.comfy = await comfy.stopOwned('退出收尾');
+      } catch (e) {
+        out.comfy = { stopped: false, error: e.message };
+        log.warn('退出收尾：停止 ComfyUI 失败：' + e.message);
+      }
+      try {
+        out.llm = llm.stopServer();
+      } catch (e) {
+        out.llm = { running: false, error: e.message };
+        log.warn('退出收尾：停止 LLM 运行时失败：' + e.message);
+      }
+      return out;
+    })();
+  }
+  return quit.promise;
+}
+
+/**
+ * 收尾第二步：关 HTTP 服务 → 落盘日志（log 是同步 appendFileSync，返回即已落盘）→ 退出进程。
+ * 只执行一次；另有 1500 ms 上限兜底，保证任何卡住的连接都不会让进程赖着不走。
+ */
+function finishQuit() {
+  if (quit.finishing) return;
+  quit.finishing = true;
+  const t0 = quit.startedAt || Date.now();
+  // 给 /app/quit 的 HTTP 响应留出冲出去的时间，再开始拆服务。
+  setTimeout(() => {
+    let closed = false;
+    const done = () => {
+      if (closed) return;
+      closed = true;
+      try { server.closeAllConnections?.(); } catch { /* 老 Node 没有这个方法 */ }
+      log.info(`退出收尾完成（耗时 ${Date.now() - t0} ms）：ComfyUI 与 LLM 已停止、HTTP 服务已关闭，进程退出。`);
+      process.exit(0);
+    };
+    try { server.closeIdleConnections?.(); } catch { /* 老 Node 没有这个方法 */ }
+    try { server.close(done); } catch { done(); }
+    // 浏览器握着 keep-alive 连接时 close() 不会立刻回调：200 ms 后主动断开全部连接。
+    setTimeout(() => { try { server.closeAllConnections?.(); } catch { /* ignore */ } }, 200);
+    setTimeout(done, 1500);
+  }, 150);
+}
+
 // ── 路由 ─────────────────────────────────────────────────
 
 async function handleApp(req, res, url, body) {
@@ -134,6 +206,11 @@ async function handleApp(req, res, url, body) {
     return sendJson(res, 200, {
       version: VERSION,
       buildTag: BUILD_TAG,
+      // v1.2.2（R4/U1）：**本程序**实际监听的端口。以前这里没有这个字段，前端只能拿
+      // listen.port 凑 —— 而它之所以"看起来等于实际端口"，只是因为旧实现把漂移值回写了设置文件；
+      // 取消回写之后，实际端口必须由这个顶层字段（字段名就是 port）自证。
+      // 注意：下面的 comfy.port 是 **ComfyUI 的端口**（默认 8188），永远不要拿它当服务端口。
+      port: listenPort(),
       lang: s.lang,
       root: paths.root,
       paths: {
@@ -170,6 +247,23 @@ async function handleApp(req, res, url, body) {
   }
 
   if (p === '/app/selfcheck') return sendJson(res, 200, selfcheck());
+
+  // v1.2.2（R3）：优雅退出入口 —— 托盘「关闭控制台并停止后端」会先打这里。
+  // 为什么必须有它：Windows 上 taskkill /F 就是 TerminateProcess，实测不给 node 任何执行机会
+  // （SIGTERM/SIGINT/SIGBREAK/exit 处理器一个都不跑），所以"直接强杀"等于放弃让后端把
+  // 自己拉起的 ComfyUI 带走。重复调用 / 并发调用都安全：收尾只执行一次，后面的调用复用同一份结果。
+  if (p === '/app/quit') {
+    if (req.method !== 'POST') return sendJson(res, 405, { error: 'method not allowed（退出请用 POST）' });
+    const first = !quit.promise;
+    const r = await beginQuit('POST /app/quit');
+    sendJson(res, 200, {
+      ok: true, quitting: true, first, calls: quit.calls,
+      comfy: r.comfy, llm: r.llm,
+      note: '本程序拉起的 ComfyUI 与本地 LLM 运行时已停止，HTTP 服务即将关闭。',
+    });
+    finishQuit();
+    return undefined;
+  }
 
   if (p === '/app/logs') {
     return sendJson(res, 200, { file: log.file(), lines: log.recent(Number(url.searchParams.get('tail') || 300)) });
@@ -214,6 +308,8 @@ async function handleApp(req, res, url, body) {
       if (action === 'delete') return sendJson(res, 200, store.deleteGroup(body.name));
       if (action === 'add') return sendJson(res, 200, store.addToGroup(body.tag, body.group));
       if (action === 'remove') return sendJson(res, 200, store.removeFromGroup(body.tag, body.group));
+      // v1.2.1（需求 2）：面板内的「＋分组」整份替换（分组在面板里是本地 state，逐条调 add/remove 会互相覆盖）
+      if (action === 'replace') return sendJson(res, 200, store.replaceGroups(body.groups));
       return sendJson(res, 404, { error: '未知的分组操作：' + action });
     } catch (e) {
       return sendJson(res, 400, { error: e.message });
@@ -371,9 +467,32 @@ async function handleApp(req, res, url, body) {
     }
   }
   if (p === '/app/llm/server/stop' && req.method === 'POST') return sendJson(res, 200, llm.stopServer());
-  if (p === '/app/llm/session/new' && req.method === 'POST') return sendJson(res, 200, llm.newSession(body.sessionId || 'default'));
+  // v1.2.1（需求 5）：开新会话**不删旧会话**；要删历史请用下面的 DELETE。
+  if (p === '/app/llm/session/new' && req.method === 'POST') {
+    try {
+      return sendJson(res, 200, llm.openSession(body.sessionId || 'default', { eraseCache: !!body.eraseCache }));
+    } catch (e) {
+      return sendJson(res, 400, { error: e.message });
+    }
+  }
+  // v1.2.1：历史会话列表（只给摘要，避免一次拉全文）
+  if (p === '/app/llm/sessions' && req.method === 'GET') {
+    return sendJson(res, 200, store.listSessions());
+  }
+  // v1.2.1：用户主动删除某条历史会话（只有这里会真的删）
+  if (p.startsWith('/app/llm/session/') && req.method === 'DELETE') {
+    const id = decodeURIComponent(p.slice('/app/llm/session/'.length));
+    return sendJson(res, 200, store.dropSession(id));
+  }
+  // 旧的「丢弃上下文」语义保留在 POST /app/llm/session/discard，避免旧脚本失效
+  if (p === '/app/llm/session/discard' && req.method === 'POST') {
+    return sendJson(res, 200, llm.newSession(body.sessionId || 'default'));
+  }
+  // v1.2.1：POST /app/llm/session/new 之外，GET /app/llm/session/<id> 取整段历史。
+  // 注意：必须排除 `new` / `discard` 这两个**动作**段，否则 GET 会把它们当成会话 id。
   if (p.startsWith('/app/llm/session/') && req.method === 'GET') {
     const id = decodeURIComponent(p.slice('/app/llm/session/'.length));
+    if (id === 'new' || id === 'discard') return sendJson(res, 400, { error: '缺少会话 id（' + id + ' 是动作名，不是会话 id）' });
     return sendJson(res, 200, store.getSession(id));
   }
   if (p === '/app/llm/chat' && req.method === 'POST') {
@@ -581,52 +700,82 @@ server.on('upgrade', (req, socket, head) => {
 
 // ── 启动 ─────────────────────────────────────────────────
 
+// 端口冲突时最多自增 2 次（旧实现是 20 —— 那叫"无限漂移"：页面拿到的是旧地址，后端却早跑远了）。
+const MAX_PORT_BUMP = 2;
+
+// ⚠️ 就绪处理必须**只挂一次**：Node 的 `server.listen(port, host, cb)` 是把 cb 挂成一次性的
+// 'listening' 监听，而 EADDRINUSE 的每次自增都会重新调用一次 listen() —— 回调于是越攒越多，
+// 最后一次真的绑上时同一段"就绪"逻辑会连着跑 N 遍（实测：自增 2 次 → "打开："日志、DCP_READY、
+// 局域网令牌、autoStart 全部各来 3 遍，autostart 甚至会一次拉起 3 个 ComfyUI，
+// 而内存里只记得住最后一个 pid —— 退出时另外两个就成了新的孤儿）。
+let listeningWired = false;
+let listeningDone = false;
+
+/** 成功绑定后的收尾（幂等，只生效一次）。 */
+function onListening() {
+  if (listeningDone) return;
+  listeningDone = true;
+  const actual = server.address().port;
+  actualPort = actual;                 // 实际端口只在内存；不回写设置（见 listenPort 的注释）
+  const s = load();
+  if (actual !== s.listen.port) {
+    log.warn(`设置里的端口 ${s.listen.port} 已被占用，实际监听 ${actual}（v1.2.2 起不再改写设置文件；`
+      + `本程序真实地址以随后那一行为准，也可以从接口 /app/state 的顶层 port 字段读到）`);
+  }
+  const token = s.listen.lan ? ensureLanToken() : '';
+  const urls = [`http://127.0.0.1:${actual}/`];
+  if (s.listen.lan) {
+    for (const list of Object.values(os.networkInterfaces())) {
+      for (const ni of list || []) {
+        if (ni.family === 'IPv4' && !ni.internal) urls.push(`http://${ni.address}:${actual}/?token=${token}`);
+      }
+    }
+  }
+  log.info(`comfy-panel-standalone ${BUILD_TAG} 已就绪`);
+  log.info('打开：' + urls[0]);
+  if (s.listen.lan) log.info('局域网地址：' + urls.slice(1).join('  '));
+  log.info(`项目根目录：${paths.root}`);
+  log.info(`ComfyUI 模式：${s.comfy.mode}（${comfyDir(s) || '未配置'}）`);
+  for (const issue of selfcheck().issues) log.warn(`自检：${issue.message} → ${issue.fix}`);
+  // comfy.autoStart：启动后自动把 ComfyUI 拉起来（默认关闭；在设置页打开）。
+  if (s.comfy.autoStart) {
+    if (!comfyDir(s)) {
+      log.warn('已开启「启动后自动拉起 ComfyUI」，但还没有配置 ComfyUI 目录 —— 跳过自动启动');
+    } else {
+      log.info('已开启「启动后自动拉起 ComfyUI」，正在后台探测/启动…');
+      comfy.launch()
+        .then((r) => {
+          if (r.online) log.info('ComfyUI 就绪（自动启动）');
+          else log.warn('ComfyUI 自动启动未成功：' + (r.error || '未知原因'));
+        })
+        .catch((e) => log.warn('ComfyUI 自动启动异常：' + e.message));
+    }
+  }
+  // 供启动脚本读取（stdout 关键行，脚本据此打开浏览器）
+  process.stdout.write('DCP_READY ' + JSON.stringify({ url: urls[0], lanUrls: urls.slice(1), port: actual, version: VERSION }) + '\n');
+}
+
 function listen(port, host, attempt = 0) {
+  if (!listeningWired) {
+    listeningWired = true;
+    server.on('listening', onListening);
+  }
   server.once('error', (e) => {
-    if (e.code === 'EADDRINUSE' && attempt < 20) {
-      log.warn(`端口 ${port} 已被占用，尝试 ${port + 1}`);
+    if (e.code === 'EADDRINUSE' && attempt < MAX_PORT_BUMP) {
+      log.warn(`端口 ${port} 已被占用，尝试 ${port + 1}（第 ${attempt + 1}/${MAX_PORT_BUMP} 次自增）`);
       listen(port + 1, host, attempt + 1);
       return;
+    }
+    if (e.code === 'EADDRINUSE') {
+      // v1.2.2（R4）：不再继续探测、也**不再回写设置文件**，直接快速失败并说清怎么办。
+      log.error(`端口 ${port} 仍被占用：已连续自增 ${MAX_PORT_BUMP} 次仍未找到可用端口，放弃启动（不再继续漂移）。`);
+      log.error(`请关闭占用 ${port - MAX_PORT_BUMP}~${port} 端口的程序，或用环境变量 DCP_PORT 指定其它端口后重试。`);
+      process.exit(1);
     }
     log.error('服务启动失败：' + e.message);
     process.exit(1);
   });
-  server.listen(port, host, () => {
-    const actual = server.address().port;
-    if (actual !== load().listen.port) save({ listen: { port: actual } });
-    const s = load();
-    const token = s.listen.lan ? ensureLanToken() : '';
-    const urls = [`http://127.0.0.1:${actual}/`];
-    if (s.listen.lan) {
-      for (const list of Object.values(os.networkInterfaces())) {
-        for (const ni of list || []) {
-          if (ni.family === 'IPv4' && !ni.internal) urls.push(`http://${ni.address}:${actual}/?token=${token}`);
-        }
-      }
-    }
-    log.info(`comfy-panel-standalone ${BUILD_TAG} 已就绪`);
-    log.info('打开：' + urls[0]);
-    if (s.listen.lan) log.info('局域网地址：' + urls.slice(1).join('  '));
-    log.info(`项目根目录：${paths.root}`);
-    log.info(`ComfyUI 模式：${s.comfy.mode}（${comfyDir(s) || '未配置'}）`);
-    for (const issue of selfcheck().issues) log.warn(`自检：${issue.message} → ${issue.fix}`);
-    // comfy.autoStart：启动后自动把 ComfyUI 拉起来（默认关闭；在设置页打开）。
-    if (s.comfy.autoStart) {
-      if (!comfyDir(s)) {
-        log.warn('已开启「启动后自动拉起 ComfyUI」，但还没有配置 ComfyUI 目录 —— 跳过自动启动');
-      } else {
-        log.info('已开启「启动后自动拉起 ComfyUI」，正在后台探测/启动…');
-        comfy.launch()
-          .then((r) => {
-            if (r.online) log.info('ComfyUI 就绪（自动启动）');
-            else log.warn('ComfyUI 自动启动未成功：' + (r.error || '未知原因'));
-          })
-          .catch((e) => log.warn('ComfyUI 自动启动异常：' + e.message));
-      }
-    }
-    // 供启动脚本读取（stdout 关键行，脚本据此打开浏览器）
-    process.stdout.write('DCP_READY ' + JSON.stringify({ url: urls[0], lanUrls: urls.slice(1), port: actual, version: VERSION }) + '\n');
-  });
+  server.listen(port, host);
 }
 
 function main() {
@@ -639,21 +788,33 @@ function main() {
   log.setup(paths.logs);
   const s = load();
   log.info(`comfy-panel-standalone 启动中（Node ${process.version}，${process.platform}）`);
+  // v1.2.2（R2）：清掉上一次留下的、**确实属于本程序**的 ComfyUI 孤儿。
+  // 孤儿的真实成因是"父链被单进程杀掉后断掉"（不是 detached 脱离进程树）—— 上一层的 node 没了，
+  // taskkill /T 再也够不着它，而下次启动的 launch() 又会"探测到端口有回应"把它认领。
+  // 唯一能识别它的就是 data/run 下的归属记录：记录存在 + 进程存活 + 命令行确实是 ComfyUI main.py
+  // 三条同时对得上才动手；用户自己启动的实例没有任何记录，永远不在候选里。
+  try { comfy.cleanupOrphans(); } catch (e) { log.warn('启动清理归属记录时出错（不影响启动）：' + e.message); }
   const port = Number(process.env.DCP_PORT || s.listen.port || 8788);
   const host = process.env.DCP_HOST || (s.listen.lan ? '0.0.0.0' : '127.0.0.1');
   listen(port, host);
 
+  // 退出路径：/app/quit（托盘先打这里）、SIGINT / SIGTERM / SIGBREAK 都走同一套收尾。
   const shutdown = (sig) => {
     log.info('收到 ' + sig + '，正在退出…');
-    try { llm.stopServer(); } catch { /* ignore */ }
-    server.close(() => process.exit(0));
-    setTimeout(() => process.exit(0), 3000).unref();
+    beginQuit(sig).then(() => finishQuit()).catch(() => finishQuit());
   };
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGBREAK', () => shutdown('SIGBREAK'));
+  // v1.2.2（R1）同步兜底：process 的 'exit' 事件里可以做同步系统调用（spawnSync），
+  // 所以正常退出 / process.exit() / 上面三个处理器触发的退出，退出前都会再尽力把
+  // 本程序拉起的 ComfyUI 进程树带走一次（异步收尾被打断也兜得住）。
+  // ⚠️ taskkill /F 直接 TerminateProcess 时本回调同样不会执行 —— 那是 Windows 的硬边界，
+  //    由"托盘先礼后兵"（scripts/tray.ps1 先 POST /app/quit）与"下次启动清孤儿"兜住。
+  process.on('exit', () => { try { comfy.killOwnedSync('process-exit'); } catch { /* 退出阶段不再抛 */ } });
   process.on('unhandledRejection', (e) => log.error('未处理的 Promise 拒绝：' + (e && e.stack ? e.stack : e)));
 }
 
 if (require.main === module) main();
 
-module.exports = { server, main };
+module.exports = { server, main, listenPort };

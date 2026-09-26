@@ -52,6 +52,10 @@ export default function ArtistsPage(props) {
   const [menuNewName, setMenuNewName] = useState('');
   const [groupArm, setGroupArm] = useState('');      // 待确认删除的分组名
   const [groupBusy, setGroupBusy] = useState('');
+  // v1.2.1（需求 2）：分组展开成员 / 重命名（旧版只能建组、删组、加人，进错组拿不出来也改不了名）
+  const [groupOpen, setGroupOpen] = useState('');
+  const [renameArm, setRenameArm] = useState('');
+  const [renameText, setRenameText] = useState('');
 
   const mounted = useRef(true);
   useEffect(() => {
@@ -129,6 +133,14 @@ export default function ArtistsPage(props) {
     setGroupArm('');
     await groupOp('delete', { name }, t('artists.groups.deleted') + '：' + name);
   }, [groupArm, groupOp, t]);
+
+  /** v1.2.1（需求 2）：分组重命名（后端 /app/artists/groups/rename 一直都有，缺的是页面入口）。 */
+  const renameGroup = useCallback(async (from, to) => {
+    const next = String(to || '').trim();
+    if (!next || next === from) { setRenameArm(''); return; }
+    const r = await groupOp('rename', { from, to: next }, t('artists.groups.renamed') + '：' + from + ' → ' + next);
+    if (r) { setRenameArm(''); setRenameText(''); setGroupOpen(next); }
+  }, [groupOp, t]);
 
   /** 加组菜单：先列已存在的组（点一下即加入），也可以就地新建一个组并加入。 */
   const groupPickMenu = (tag) => h('div', { className: 'group-menu' },
@@ -233,11 +245,18 @@ export default function ArtistsPage(props) {
 
   // ── 渲染 ────────────────────────────────────────────────
 
+  /** v1.2.1（需求 2）：给收藏 / 黑名单里的画师都补上「＋分组」，不切到搜索结果也能加组。 */
   const chipList = (tags, action, blocked) => (tags.length
     ? h('div', { className: 'chip-wrap' }, tags.map((tag, i) => h('span', {
       className: blocked ? 'chip blocked' : 'chip', key: action + i,
     },
     tag,
+    h('button', {
+      className: 'chip-group',
+      disabled: !!groupBusy || !groups.length,
+      title: groups.length ? t('artists.groups.addHint') : t('artists.groups.none'),
+      onClick: () => setPickFor(pickFor === tag ? '' : tag),
+    }, t('artists.groups.add')),
     h('button', {
       disabled: busy === action + ':' + tag,
       title: t('common.remove'),
@@ -254,7 +273,8 @@ export default function ArtistsPage(props) {
       h('span', { className: 'sp' }),
       h('span', { className: 'count' }, String(favs.length)),
       h('button', { className: 'btn tiny', onClick: loadLists }, t('common.refresh'))),
-    loaded ? chipList(favs, 'fav', false) : h('div', { className: 'muted' }, t('common.loading')));
+    loaded ? chipList(favs, 'fav', false) : h('div', { className: 'muted' }, t('common.loading')),
+    pickFor && favs.indexOf(pickFor) >= 0 ? groupPickMenu(pickFor) : null);
 
   const blackCard = h('div', { className: 'card' },
     h('div', { className: 'row' },
@@ -262,6 +282,7 @@ export default function ArtistsPage(props) {
       h('span', { className: 'sp' }),
       h('span', { className: 'count' }, String(blacklist.length))),
     loaded ? chipList(blacklist, 'blacklist', true) : h('div', { className: 'muted' }, t('common.loading')),
+    pickFor && blacklist.indexOf(pickFor) >= 0 ? groupPickMenu(pickFor) : null,
     h('div', { className: 'hint' }, t('artists.exclusive')));
 
   const searchCard = h('div', { className: 'card' },
@@ -402,17 +423,53 @@ export default function ArtistsPage(props) {
     groups.length
       ? h('div', { className: 'list list-scroll' }, groups.map((g) => {
         const members = g.items || [];
-        return h('div', { className: 'hit-row', key: 'g' + g.name },
-          h('span', { className: 'hit-name', title: members.join(', ') },
-            g.name + '（' + members.length + ' ' + t('artists.groups.count') + '）'),
+        const open = groupOpen === g.name;
+        return h('div', { key: 'g' + g.name },
+          h('div', { className: 'hit-row' },
+          h('button', {
+            className: 'hit-name group-name-btn',
+            title: t('artists.groups.expand'),
+            onClick: () => { setGroupOpen(open ? '' : g.name); setRenameArm(''); setRenameText(''); },
+          }, (open ? '▾ ' : '▸ ') + g.name + '（' + members.length + ' ' + t('artists.groups.count') + '）'),
           h('span', { className: 'muted', style: { maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } },
             members.slice(0, 4).join('、') + (members.length > 4 ? ' …' : '')),
+          h('button', {
+            className: 'btn tiny', disabled: !!groupBusy,
+            title: t('artists.groups.rename'),
+            onClick: () => { setRenameArm(renameArm === g.name ? '' : g.name); setRenameText(g.name); },
+          }, t('artists.groups.rename')),
           h('button', {
             className: groupArm === g.name ? 'star' : 'btn tiny',
             disabled: !!groupBusy,
             title: t('artists.groups.delHint'),
             onClick: () => deleteGroup(g.name),
-          }, groupArm === g.name ? t('artists.groups.delConfirm') : t('artists.groups.del')));
+          }, groupArm === g.name ? t('artists.groups.delConfirm') : t('artists.groups.del'))),
+        renameArm === g.name
+          ? h('div', { className: 'row tight', style: { padding: '4px 8px' } },
+            h('input', {
+              className: 'input', value: renameText, placeholder: t('artists.groups.renamePlaceholder'),
+              onChange: (e) => setRenameText(e.target.value),
+              onKeyDown: (e) => { if (e.key === 'Enter') { e.preventDefault(); renameGroup(g.name, renameText); } },
+            }),
+            h('button', {
+              className: 'btn tiny', disabled: !!groupBusy || !renameText.trim() || renameText.trim() === g.name,
+              onClick: () => renameGroup(g.name, renameText),
+            }, t('common.confirm')),
+            h('button', { className: 'btn tiny', onClick: () => { setRenameArm(''); setRenameText(''); } }, t('common.cancel')))
+          : null,
+        open
+          ? h('div', { className: 'group-members' },
+            members.length
+              ? members.map((tag) => h('span', { className: 'chip', key: 'gm' + tag },
+                tag,
+                h('button', {
+                  className: 'chip-group', disabled: !!groupBusy,
+                  title: t('artists.groups.removeMember'),
+                  onClick: () => removeMember(tag, g.name),
+                }, '✕')))
+              : h('div', { className: 'muted' }, t('artists.groups.none')),
+            h('div', { className: 'hint' }, t('artists.groups.membersHint')))
+          : null);
       }))
       : h('div', { className: 'muted' }, t('artists.groups.none')));
 

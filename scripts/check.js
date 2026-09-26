@@ -164,6 +164,36 @@ if (hits.length) {
   ok('扫描 ' + targets.length + ' 个文本文件：零命中');
 }
 
+// ⑤b 版本号一致性（v1.2.1 新增）
+// 为什么必须有：面板头部那个「🎨 … v1.2.x」徽标来自 web/panel.js 里**硬编码**的 BUILD_TAG，
+// 它和 server/config.js 的 VERSION、package.json 的 version 是三处独立来源。
+// v1.2.1 发版时就漏改了 BUILD_TAG，用户看到顶栏还是旧版本号（实测踩过）。
+console.log('\n[5b] 版本号一致性（config.js / package.json / panel.js 的 BUILD_TAG）');
+try {
+  const cfgText = fs.readFileSync(path.join(ROOT, 'server', 'config.js'), 'utf8');
+  const pkgText = fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8');
+  const panelText = fs.readFileSync(path.join(ROOT, 'web', 'panel.js'), 'utf8');
+  const cfgV = (cfgText.match(/const\s+VERSION\s*=\s*'([^']+)'/) || [])[1];
+  const pkgV = (JSON.parse(pkgText.replace(/^\uFEFF/, '')).version) || '';
+  const tagV = (panelText.match(/const\s+BUILD_TAG\s*=\s*"([^"]+)"/) || [])[1];
+  const same = cfgV && pkgV && tagV && cfgV === pkgV && ('v' + cfgV) === tagV;
+  if (same) ok('config.VERSION=' + cfgV + ' / package.json=' + pkgV + ' / panel BUILD_TAG=' + tagV + ' 三处一致');
+  else bad('版本号不一致：config.VERSION=' + cfgV + '、package.json=' + pkgV + '、panel BUILD_TAG=' + tagV
+    + '（三处必须同为 x.y.z / "v" + x.y.z）');
+} catch (e) {
+  bad('版本号一致性检查失败：' + e.message);
+}
+
+// ⑤c 面板构建标识与 VERSION 必须同时出现（README「4 处版本号」中的第 4 处是核心版提交信息，不参与自检）
+try {
+  const panelText = fs.readFileSync(path.join(ROOT, 'web', 'panel.js'), 'utf8');
+  const shown = /面板构建\s*"\s*\+\s*BUILD_TAG/.test(panelText) || /"面板构建 " \+ BUILD_TAG/.test(panelText);
+  if (shown) ok('面板头部徽标确实渲染 BUILD_TAG（不是写死的字符串）');
+  else bad('面板头部徽标没有引用 BUILD_TAG（写死版本号会导致发版后徽标不更新）');
+} catch (e) {
+  bad('面板徽标检查失败：' + e.message);
+}
+
 console.log('\n结果：pass=' + pass + ' fail=' + fail);
 if (fail) {
   console.log('\n未通过项：');
