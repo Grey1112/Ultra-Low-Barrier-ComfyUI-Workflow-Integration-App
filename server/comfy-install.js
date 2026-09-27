@@ -535,6 +535,26 @@ async function installFromArchive(job, archive, opts = {}) {
   // ── 解压：**先备份已有 models\，解压成功后合并回来**（红线：重装不删权重）──────────
   job.log('解压便携包（大包解压需要几分钟，请勿关闭窗口）…');
   job.phase('comfyui');
+
+  // v2.0.3：解压会**替换 ComfyUI 自身的文件** —— 本程序拉起的 ComfyUI 若还在运行，
+  // 权重目录里的文件被它占着，备份/清盘都会失败。先自动停掉自己的实例（红线 14：只停自己的；
+  // 别人的实例绝不动手，如实报错让用户手动停）。
+  try {
+    const stopped = await comfy.stopOwned('重装 ComfyUI（安装流程自动停止）');
+    if (stopped && stopped.stopped) {
+      job.log('已自动停止本程序拉起的 ComfyUI（重装需要替换其文件）', 'warn');
+      await new Promise((r2) => setTimeout(r2, 1200));   // 留出文件句柄释放时间
+    } else if (stopped && stopped.owner === 'foreign') {
+      const still = await comfy.probe(comfy.current().port, 1500);
+      if (still) throw new Error('检测到非本程序拉起的 ComfyUI 正在运行（端口 ' + comfy.current().port + '）。'
+        + '为避免误伤你的实例，本次安装已中止——请手动停止它后重试。');
+    }
+  } catch (e) {
+    if (/中止/.test(String(e.message))) throw e;          // 我们主动抛的（foreign 运行中）原样上抛
+    job.log('停止 ComfyUI 时出现问题（继续安装）:' + e.message, 'warn');
+  }
+
+  job.phase('comfyui');
   const modelsBackup = path.join(paths.runtimeDl, '_comfyui-models-bak');
   let movedModels = false;
   // 两个可能的权重落位：便携包内层 ComfyUI\models 与 destRoot\models
@@ -550,7 +570,9 @@ async function installFromArchive(job, archive, opts = {}) {
     }
   };
   const restoreModels = () => {
-    if (!movedModels) return;
+    // v2.0.3： movedModels 为假但备份目录仍有内容时（入口合并被占用打断），解压完成后**再试一次合并**
+    // —— 拖到解压结束，占用通常早已解除；合并成功即把权重送回原位，失败则备份原样保留（下次安装再试）。
+    if (!movedModels && !(fsx.isDir(path.join(modelsBackup, 'inner')) || fsx.isDir(path.join(modelsBackup, 'outer')))) return;
     try {
       mergeBack();
     } catch (e) {
@@ -568,18 +590,32 @@ async function installFromArchive(job, archive, opts = {}) {
     try { mergeBack(); } catch (e) { job.log('合并上次备份失败（备份原样保留，本次安装继续）：' + e.message, 'error'); }
   }
 
-  try {
-    for (const [src, tag] of [[innerModels, 'inner'], [outerModels, 'outer']]) {
-      if (fsx.isDir(src)) {
-        const dst = path.join(modelsBackup, tag);
-        fsx.ensureDir(path.dirname(dst));
-        fs.renameSync(src, dst);
-        movedModels = true;
-        job.log(`已临时保管已有权重目录（重装后原样合并回来）：${src}`, 'warn');
+  // v2.0.3：挪动权重目录可能因**文件占用**失败 —— 最常见：模型通道还在往
+  // runtime\comfyui\ComfyUI\models 里写 .part 文件（下载与解压分属两条并行通道）。
+  // renameSync 对"有任何句柄打开的目录树"必失败（EPERM/EBUSY）→ 重试等待占用释放；
+  // 彻底失败也不 silently 继续 —— modelsSafe 决策（下方）会带真实原因中止或按空目录放行。
+  let moveErr = null;
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    moveErr = null;
+    try {
+      let moved = false;
+      for (const [src, tag] of [[innerModels, 'inner'], [outerModels, 'outer']]) {
+        if (fsx.isDir(src)) {
+          const dst = path.join(modelsBackup, tag);
+          fsx.ensureDir(path.dirname(dst));
+          fs.renameSync(src, dst);
+          movedModels = true;
+          job.log(`已临时保管已有权重目录（重装后原样合并回来）：${src}`, 'warn');
+        }
+      }
+      if (movedModels || (!fsx.isDir(innerModels) && !fsx.isDir(outerModels))) break;
+    } catch (e) {
+      moveErr = e;
+      if (attempt < 5) {
+        job.log(`权重目录暂被占用（${e.message}）——常见原因：模型仍在下载写入该目录、ComfyUI 未完全退出。5 秒后重试（${attempt}/4）…`, 'warn');
+        await new Promise((r3) => setTimeout(r3, 5000));
       }
     }
-  } catch (e) {
-    job.log('备份已有权重目录失败（改为原地保留，不做全量删除）：' + e.message, 'warn');
   }
 
   // 解压需要 7-Zip；本地归档是 ZIP 时内置解压器就够（不去联网下 7-Zip）
@@ -588,12 +624,41 @@ async function installFromArchive(job, archive, opts = {}) {
   else job.log('本次不需要 7-Zip（归档是 ZIP，走内置解压器）');
 
   try {
-    // v1.3.1（数据丢失修复）：只有确认权重已安全挪进备份（或本来就没有权重目录）才允许清空
-    // destRoot。旧实现在备份失败时日志写着"原地保留"，紧接着却照样 rmSync —— 权重照样被删。
-    const modelsSafe = movedModels || (!fsx.isDir(innerModels) && !fsx.isDir(outerModels));
+    // v1.3.1/v2.0.3（数据丢失修复）：只有确认权重已安全挪进备份（或本来就没有权重目录、
+    // 或备份目录里已有一份内容）才允许清空 destRoot。旧实现在备份失败时日志写着"原地保留"，
+    // 紧接着却照样 rmSync —— 权重照样被删。
+    const bakHasContent = () => fsx.isDir(path.join(modelsBackup, 'inner')) || fsx.isDir(path.join(modelsBackup, 'outer'));
+    /** 目录里是否有"真文件"（size>0）：区分真权重与上次中断遗留的空目录骨架。 */
+    const dirHasWeights = (d, depth) => {
+      if (!fsx.isDir(d) || depth > 6) return false;
+      let names = [];
+      try { names = fs.readdirSync(d, { withFileTypes: true }); } catch { return false; }
+      for (const e of names) {
+        const p = path.join(d, e.name);
+        if (e.isFile()) { try { if (fs.statSync(p).size > 0) return true; } catch { /* ignore */ } }
+        else if (e.isDirectory() && dirHasWeights(p, depth + 1)) return true;
+      }
+      return false;
+    };
+    let modelsSafe = movedModels || (!fsx.isDir(innerModels) && !fsx.isDir(outerModels));
+    if (!modelsSafe && bakHasContent()) {
+      // 备份目录里已有一份内容（入口合并被占用打断）—— 权重在备份里是安全的，放行；
+      // 解压完成后 restoreModels 会再试合并（届时占用通常早已解除）。
+      job.log('权重已在备份目录中（上次合并未完成）——视同已安全备份，继续安装', 'warn');
+      movedModels = true;                     // 让解压后的 restoreModels 再试合并
+      modelsSafe = true;
+    }
     if (!modelsSafe) {
-      throw new Error('权重目录未能安全备份，已中止本次解压安装（权重原样保留）。'
-        + '请检查 ' + modelsBackup + ' 与磁盘空间后重试。');
+      // v2.0.3：rename 失败的目录里可能根本没有真权重（上次中断遗留的空目录骨架）——没有可失去的就继续。
+      const hasValuable = dirHasWeights(innerModels, 0) || dirHasWeights(outerModels, 0);
+      if (!hasValuable) {
+        job.log('待备份的权重目录里没有任何文件（多为上次中断遗留的空目录）——无需备份，直接清理继续', 'warn');
+      } else {
+        throw new Error('权重目录未能安全备份，已中止本次解压安装（权重原样保留）。原因：'
+          + (moveErr ? moveErr.message : '目录被占用')
+          + '。常见原因：① 模型仍在下载（正在写 runtime\\comfyui\\ComfyUI\\models 里的 .part 文件）—— 队列会自动等待，稍后点「继续」重试；'
+          + '② ComfyUI 或资源管理器正占用该目录 —— 请先停止 ComfyUI / 关闭相关窗口后重试。备份目录：' + modelsBackup);
+      }
     }
     // 半成品目录只清"代码与解释器"，权重已经在上面挪走了
     fs.rmSync(destRoot, { recursive: true, force: true });

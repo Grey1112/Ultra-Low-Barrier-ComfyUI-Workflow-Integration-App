@@ -143,7 +143,7 @@ window.__ModuleLoader__.load({
 		// 与插件版不同：独立版静态直接托管、**没有 ?rev= 快照机制**，改代码刷新即生效。
 		// 【发版必改】这里与 server/config.js 的 VERSION、package.json 的 version 必须一致
 		//（README「4 处版本号」里的面板这一处）。v1.2.1 起由 scripts/check.js 的 [6] 项强制校验。
-		const BUILD_TAG = "v2.0.1"
+		const BUILD_TAG = "v2.0.3"
 
 		// 实时通道地址：永远走面板自己的来源（同源 relay），不直连 8188。
 		// 纯函数，便于 node 侧冒烟测试直接断言。

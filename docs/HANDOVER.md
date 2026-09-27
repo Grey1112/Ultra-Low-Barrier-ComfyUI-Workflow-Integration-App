@@ -38,7 +38,7 @@
 | GitHub 发布版 | `<开发副本>\release\core\` | 脚本生成的干净拷贝（62 文件，含 `.git`），**只包含源码/脚本/文档/画师清单/许可** |
 | 交付拷贝 | `<交付目录>\` | `release\core` 的镜像拷贝 + `.git`，供直接上手/上传 |
 | **AI 生成声明** | `<开发副本>\AI-DECLARATION.md` | **本项目自身全部代码与文档由 AI 生成**；列明第三方边界与免责。已在 `build-core.ps1` 白名单与文档齐全检查里，会随核心版交付 |
-| 交接与验收脚本 | `<验收脚本目录>\*.cjs` | **33 个**验收/诊断脚本（v1.3.x 期间新增 10 个 `_v13x-*.cjs`，v2.0.0 新增 2 个 `_v200-*.cjs`）。**不属于交付物**（`build-core.ps1` 会排除该目录），但接手人必需，见 §7 |
+**50 个**验收/诊断/复现脚本（v1.3.x 新增 10 个 `_v13x-*.cjs`，v2.0.x 新增 `_v200-*` / `_v201-*` / `_v203-*` 等；含无头 Edge 驱动 `cdp.cjs` 与启动器/文档工具）
 | 网络探测原始数据 | `<验收脚本目录>\probe-{A..F}.{txt,json}`、`round5-mirrors.txt` | 镜像探测的逐条原始记录（含失败原因），排障时比结论更有用 |
 
 > `.scratch` 类目录**不随包发布**是有意的：里面含真实机器路径与探测脚本。但它也**必须交接**，否则接手人无法复现"哪条结论是怎么测出来的"。
@@ -85,11 +85,11 @@ curl.exe -s http://127.0.0.1:8788/app/install/queue    # 队列快照：counts /
 | `index.js` | ~1024 | HTTP 路由与所有 `/app/*`、`/comfy-panel/*` 接口；面板反代；SSE 任务流；**v1.2.2：`POST /app/quit` 优雅退出、端口自增上限 2 次、`/app/state` 顶层 `port`**；**v1.3.0：安装中心一组接口（`/app/install/state`、`/app/models/library`、`/app/install/queue/*`、`/app/components|models/enqueue`、`/app/models/custom*`、`/app/models/upload`（原始字节，在 `readJsonBody` 之前分流）、`/app/models/pick-file`）** | 中（接口契约，改完要同步 `docs/INTERNAL-CONTRACT.md`） |
 | `config.js` | ~417 | 路径推导、设置默认值/夹紧/落盘、自检 | **高**（`paths` 与 `DEFAULTS` 是全项目的根） |
 | `download.js` | ~794 | 下载引擎：镜像梯队展开、三条换源规则、断点续传、sha256、完整性防线、镜像测速 | **最高**（所有安装路径都走它） |
-| `comfy-install.js` | ~1111 | 向导主流程：7-Zip、ComfyUI 本体、自定义节点、权重、画师清单、许可；**v1.3.0：`runSetup` 只装缺的（`force` 才重做）、`installComfyUI` 已装即跳过且重装先把 `models\` 挪走再合并回来、`installComponent` 供安装中心单装某组件、`installPrereqGroup` 把整组前置当一个任务跑、`downloadPortableArchive` / `installFromArchive` 把下载与解压拆成两阶段、归档/可执行文件签名校验、模型逐个失败即跳过** | 高 |
+| `comfy-install.js` | 1221 | 向导主流程：7-Zip、ComfyUI 本体、自定义节点、权重、画师清单、许可；**v1.3.0：`runSetup` 只装缺的、`installComfyUI` 已装即跳过、`installFromArchive` 两阶段、归档签名校验**；**v2.0.3：解压前自动停自有 ComfyUI、权重挪动重试 5×5s、modelsSafe 判据带真实原因与三兜底** | 高 |
 | `comfy.js` | ~628 | ComfyUI 进程管理与布局探测（`detectLayout`）、**v1.2.2 的进程归属记录 / 五条谓词 / `cleanupOrphans` / `stopOwned` / `killOwnedSync`**、artists 清单 | 中（但"只清自己的"是红线，见 §4 红线 14） |
 | `llm.js` | ~976 | llama.cpp 运行时与模型管理、本地/外接两条推理路径、SSE、角色补全接线 | 高 |
 | `characters.js` | ~486 | Danbooru 角色词表 + 563 条中文别名 + 输出补全/规范化 | 中 |
-| `works.js` | ~206 | 扫描 ComfyUI `output` 目录（本机作品）、输出目录三级解析 | 低 |
+| `works.js` | 240 |
 | `jobs.js` | ~204 | 长任务（下载/安装）的事件、列表、SSE 广播 | 中 |
 | `store.js` | ~271 | `data/` 下的 JSON 读写（画师、分组、LLM 模型、会话、setup） | 低 |
 | `util/fsx.js` | ~145 | 文件/哈希/格式化工具（含原子写） | 低 |
@@ -97,7 +97,7 @@ curl.exe -s http://127.0.0.1:8788/app/install/queue    # 队列快照：counts /
 | `util/log.js` | ~50 | 日志 | 低 |
 | `install-state.js` | ~279 | **v1.3.0**：组件/模型/自定义模型的安装状态（`data/install/state.json`）+ **磁盘真值校验**（`verifyComponent` / `markComponent` / `markComponentStale` / `markModel` / `putCustom`…） | 中（"已装好"的判据是**可续装**的地基，改之前先读 §4 红线 15） |
 | `models-catalog.js` | ~326 | **v1.3.0**：统一模型目录（内置 + 自定义）、前置展开（`requiresOf` / `prerequisiteRefs`）、管线家族校验（`validatePairing`）、自定义条目归一化（`normalizeCustom`，含**防目录穿越**的文件名与目标白名单） | 中（数据契约） |
-| `install-queue.js` | ~790 | **v1.3.0**：持久化下载队列（`data/install/tasks.json`）。**三通道调度**（`LANES = comfyui(优先,1) / prereq(2) / model(2)`，互不阻塞）—— **ComfyUI 有独立通道**，所以"前置组件或模型挤占 ComfyUI"在结构上不可能；ComfyUI 走"下载→解压"两阶段（`ctl.released` 交还通道）；暂停/继续/取消/自动换源/上下移、**前置自动入队**、重启恢复（`bootstrap` 把 `running` 收敛成 `paused`，并把老数据迁到新通道）；`list()` 额外给出 `totalSpeedKBs` 与 `runningSpeeds` | **高**（所有安装路径都走它，改之前先读 §4 红线 18） |
+| `install-queue.js` | 842 | **v1.3.0**：持久化下载队列（`data/install/tasks.json`），三通道调度（comfyui/prereq/model）、暂停/继续/取消/自动换源/上下移、前置自动入队、重启恢复；v1.3.2 pump 空转守卫；**v2.0.3：comfyui 解压阶段等模型通道跑完（避免并发写权重树锁死 rename）** | **高**（所有安装路径都走它，改之前先读 §4 红线 18） |
 | `models-upload.js` | ~203 | **v1.3.0**：自定义模型的本地上传 —— 系统文件选择框（PowerShell `OpenFileDialog`）、本机路径导入（硬链接优先 + 可中断复制）、浏览器直传（原始字节，`.uploading` → 校验 → 改名） | 中 |
 
 > 行数为 **v1.3.0（第七批）末**的实测值（`Get-ChildItem server -Recurse -Filter *.js` + 逐文件计数），**每次改动请顺手核对一次**。
@@ -108,7 +108,7 @@ curl.exe -s http://127.0.0.1:8788/app/install/queue    # 队列快照：counts /
 |---|---|---|
 | `index.html` | 23 | 唯一页面：挂载点 + 引入 vendored React/ReactDOM + `app-shell.js` |
 | `app-shell.js` | ~759 | 外壳：**四个常驻标签页**（工作台 / 画师 / 安装中心 / 设置，切页只隐藏不卸载，见 §3.4；**v1.3.0 起「向导」已被「安装中心」取代，且首次启动自动跳过去**）、顶栏（品牌/后台任务条/日志/语言/**v1.2.2 的「服务地址」徽标**）、全局 toast（**同文案 30 s 节流**）、**断连 banner 与 `window.__DCP_LINK__`**、画师数据桥（`__DCP_SAVE_ARTISTS__` / `__DCP_ARTIST_GROUP__` / `__DCP_CREATE_GROUP__`）+ 排障钩子 `window.__DCP_SHELL__` |
-| `panel.js` | ~2718 | **生图面板**（从早期插件形态 `lib/client.js` 移植 + 锚点补丁）：三栏 1:1:2、图构建器、画师、参数 |
+| `panel.js` | ~2718 | **生图面板**（从早期插件形态 `lib/client.js` 移植 + 锚点补丁）：三栏 1:1:2、图构建器、画师、参数；v2.0.1 图片栏新增「➕ 分组」（独立小组件） |
 | `panel-host.js` | ~71 | 给 `panel.js` 提供 `require("react")` 之类的垫片 |
 | `job-view.js` | ~204 | 长任务视图：`JobProgress`（进度/速度/ETA/来源）、`openJobModal`、`BackgroundJobs`（顶栏任务条，v1.3.0 起也把**持久化队列**的计数算进去）、`QueueProgress` |
 | `i18n.js` | ~268 | DOM 翻译器：`ui` 词典 + 面板 `panel` 词典 + 短语规则；中英切换 |
@@ -458,7 +458,9 @@ cd <验收脚本目录的上一级>
 | 14 | **v1.3.2（第十四轮）**：修用户实测报的三个安装中心问题。①**运行中「自动换源」假死/卡排队**：引擎新增 `DCP_RETASK` 采样（≤1 s 中止当前来源、断点保留、带出 failedHosts），finish() 重新入队、pump 立刻续传（comfyui 通道优先，不回队列干等）；只拉黑真正失败过的源；`pump()` 加"任务仍 queued 即跳出本轮"守卫（修掉同步空转卡死后端，实测实锤）。②**前置组状态**：可选节点（`required:false`）不计入组 pending/ok —— 组任务完成后组状态如实显示已安装。③**暂停**：测速/资产名/解压前采样控制意图；组件行与模型行就地补「暂停/继续」；修暂停→继续竞态（收尾不盖回用户操作）。**验收**：`_v132-accept.cjs` 用 `本地真实权重目录` 真实权重（与目录表逐字节一致）做本地下载源：换源续传+后端可响应、暂停 .part 冻结、5.24 GiB 真实下载+真实 sha256+磁盘字节精确匹配；回归 `_v131-accept` 9/9、`_v213-accept` 38/38、`_v213-b5/b6/b7` 全绿；`check.js` 19/19。版本号 → 1.3.2。 |
 | 15 | **v1.3.3（第十五轮）**：修用户实测的"外接 API 填好 Key、连接测试通过，生成仍提示缺 API Key"。①LLM 页（常驻标签页）就绪判定读的是挂载时一次性的 `/app/llm/status` —— 设置里存好 Key 后缓存仍为 `hasKey:false`，门控永远拦截（真实 DeepSeek Key 实测：服务端 hasKey=true、测试 554ms 通过、页面仍拦）；改为以**外壳 5 秒轮询的 `/app/state.llm`** 为准，status 只兜底。②设置页「连接测试」把派生字段 `hasKey` 整包回写进 settings.json（实测污染）—— 前端剥离 + `config.js` 夹紧防御性 delete，存量自愈。**验收**：真实 Key 端到端（存 Key→测试 554ms ok→SSE 生成成功→无 hasKey 残留）+ 无头 Edge `_v133-ui.cjs` 4/4 + `check.js` 19/19。版本号 → 1.3.3。 |
 | 16 | **v2.0.0（第十六轮 · UI 改版）**：用户主导的 UI 全面改版。①工作台去重复面板头部（嵌入模式不渲染头部，省约 90px），「跳转 ComfyUI」移顶栏；②固定三栏（移除布局切换与 `dcp-workbench-layout`，清约 80 行死 CSS，窄窗断点保留）；③吸顶标题重合修复（容器 padding-top 归零 + 标题负边距整行 + 背景不透明，深度滚动无重合）；④设置页即刻生效（防抖 600ms 自动保存；API Key 不进自动保存、只走显式「保存 Key」/「测试连接」；未保存修改时快照不回填；语言即点即切）；⑤视觉重排（shell.css 靛蓝 #6366f1 设计令牌、pages.css/workbench.css 对齐、panel.js 仅换 CSS 常量、首启横幅顶部整行可关闭）。**验收（<测试副本> 实测）**：无头 Edge 21/21 + 真实管线回归（归档装 ComfyUI、镜像装三件套、真实出图、LLM 生成）+ panel-test 32/32 + check.js 19/19。版本号 → 2.0.0。  ⑥**启动与运行全程无前台控制台**：start.cmd 经 conhost --headless 分离启动隐藏 PowerShell（避免被 Windows Terminal 接管成可见窗口），致命失败弹窗告警，-Foreground 保留开发者模式；**ComfyUI 弹窗根因修复** —— detached:true 使 windowsHide 失效（WT 弹出可见 python 控制台，实测实锤），移除 detached 后 CREATE_NO_WINDOW 生效，停止逻辑不受影响。**验收**：可见窗口枚举为空、监督 PowerShell MainWindowHandle=0、托盘在位、ComfyUI 在线、stop/quit 正常。 |
-| 17 | **v2.0.1（第十七轮）**：图片查看页新增「➕ 分组」——把当前图对应画师加入自定义分组（⭐ 收藏旁，菜单列出分组与人数；无分组显示「无自定义分组」；已在组内提示"已在此分组中"）。实现为独立小组件（不占 Panel hook 链），动作复用 toggleArtistGroup 双写。**验收**：D:\Game 无头 Edge 实测空/有两分支 + 服务端真实入组 + 恢复原状；panel-test 32/32；check.js 19/19。版本号 → 2.0.1。 |
+| 17 | **v2.0.1（第十七轮）**：图片查看页新增「➕ 分组」——把当前图对应画师加入自定义分组（⭐ 收藏旁，菜单列出分组与人数；无分组显示「无自定义分组」；已在组内提示"已在此分组中"）。实现为独立小组件（不占 Panel hook 链），动作复用 toggleArtistGroup 双写。**验收**：<测试副本> 无头 Edge 实测空/有两分支 + 服务端真实入组 + 恢复原状；panel-test 32/32；check.js 19/19。版本号 → 2.0.1。 |
+| 18 | **v2.0.2（第十八轮）**：修「跳转到图片文件夹」假成功/打不开（用户新部署环境实测定位，双缺陷：stdio「ignore」+unref() 吞掉子进程结局 → 一律假 ok:true；explorer 直连在部分环境 0xC0000142 当场崩）。修复：PowerShell Start-Process（ShellExecute 通道）+ 环境变量传路径 + **Shell 文件夹窗口计数作为唯一可靠成败判据**，失败如实 ok:false。**验收**：全新部署目录实测 ok:true 且 Shell.Application 确认窗口真实出现；already:true 可用；本地资源全套部署 + 真实出图正常；check.js 19/19。版本号 → 2.0.2。 |
+| 19 | **v2.0.3（第十九轮）**：修 ComfyUI 安装报「权重目录未能安全备份，已中止本次解压安装」（用户实测；三通道并发盲区——解压阶段与模型通道并发写同一权重树，.part 句柄锁住目录 → rename 失败 → 安全守卫中止）。修复：①队列门控——comfyui 解压阶段等模型通道跑完（等待原因写进任务；下载阶段照旧并行）；②解压前自动停止本程序拉起的 ComfyUI（foreign 实例绝不动手、如实报错）；③挪动失败重试 5×5s；④真实原因进报错 + 三个兜底（备份已有内容视同已备份/空目录骨架无需备份/解压后再试合并）。**验收**：沙箱 12/12（锁→如实失败权重保留；释放→成功合并；备份不丢；门控等待/放行）；check.js 19/19。版本号 → 2.0.3。 |
 
 ---
 

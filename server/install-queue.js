@@ -459,6 +459,16 @@ function pump() {
         .filter((t) => t.state === 'queued' && laneOf(t) === lane)
         .sort((a, b) => (a.order || 0) - (b.order || 0))[0];
       if (!next) break;
+      // v2.0.3：ComfyUI 的**解压安装阶段**需要独占权重目录（把 runtime\comfyui\ComfyUI\models
+      // 挪走备份再清盘）—— 此刻若模型通道还在往同一棵树里写 .part 文件，目录被占用，
+      // renameSync 必失败（用户实测："权重目录未能安全备份，已中止本次解压安装"）。
+      // 所以：解压阶段等模型下载跑完再开始；**下载阶段照旧并行**（并行下载是明确需求）。
+      // 模型任务结束（done/failed/paused/canceled）→ finish() 会 schedule() → 这里自动放行。
+      if (lane === 'comfyui' && next.phase === 'install' && runningCount('model') > 0) {
+        const waitMsg = '等待模型下载完成（解压安装需独占权重目录，避免文件占用）…';
+        if (next.message !== waitMsg) { next.message = waitMsg; next.note = waitMsg; persist(false); }
+        break;
+      }
       run(next);
       // v1.3.2 守卫：run() 没能启动它（同 key 的旧实例还在收尾，active 占坑）时状态仍是 queued，
       // 必须跳出本轮 —— 否则这个同步循环会永远抓着同一条任务空转，把整个后端的事件循环卡死

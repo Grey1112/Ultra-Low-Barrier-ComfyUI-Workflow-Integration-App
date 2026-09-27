@@ -185,17 +185,51 @@ function removeImage(rel, sub) {
   }
 }
 
-/** 打开本机文件夹（资源管理器 / 文件管理器）。 */
+/** 打开本机文件夹（资源管理器 / 文件管理器）。
+ *  v2.0.2（用户实测修复）：
+ *   · 缺陷①：旧实现 spawn(...,{stdio:'ignore'}).unref() 把子进程结局整个丢掉 —— 无论 explorer
+ *     是否真的起来，接口一律假 {ok:true}（日志里一排"已打开文件夹"全是假成功）；
+ *   · 缺陷②：explorer.exe 直连在部分环境会 0xC0000142（DLL 初始化失败）当场崩掉，窗口从未出现；
+ *   · 修复：改走 PowerShell Start-Process（ShellExecute 通道），路径经环境变量传递（零引号转义问题），
+ *     并以「Shell 文件夹窗口计数是否增加/已存在」作为**唯一可靠**的成败判据 —— explorer 的退出码
+ *     因交接语义在 0/1 间漂移不可信。失败时如实返回 ok:false + 原因（前端有对应的失败提示）。 */
 function openFolder(which) {
   // 每次点都强制重解析：ComfyUI 可能刚被拉起/刚被指到别的目录
   const map = { output: outputInfo(true).dir, logs: paths.logs, models: paths.llmModels, data: paths.data };
   const dir = map[which] || map.output;
   if (!fsx.isDir(dir)) fsx.ensureDir(dir);
-  const { spawn } = require('node:child_process');
+  const { spawnSync } = require('node:child_process');
   try {
-    if (process.platform === 'win32') spawn('explorer.exe', [dir], { detached: true, stdio: 'ignore' }).unref();
-    else if (process.platform === 'darwin') spawn('open', [dir], { detached: true, stdio: 'ignore' }).unref();
-    else spawn('xdg-open', [dir], { detached: true, stdio: 'ignore' }).unref();
+    if (process.platform === 'win32') {
+      const ps = [
+        '$ErrorActionPreference = "Stop"',
+        'try {',
+        '  $before = @((New-Object -ComObject Shell.Application).Windows()).Count',
+        '  Start-Process -FilePath explorer.exe -ArgumentList $env:DCP_OPEN_DIR | Out-Null',
+        '  Start-Sleep -Milliseconds 1200',
+        '  $wins = @((New-Object -ComObject Shell.Application).Windows())',
+        '  $hit = @($wins | Where-Object { ([System.Uri]::UnescapeDataString(($_.LocationURL -replace "^file:///", "")) -replace "/", "\\") -ieq $env:DCP_OPEN_DIR }).Count',
+        '  if ($wins.Count -gt $before -or $hit -gt 0) { Write-Output ("OK " + $hit); exit 0 }',
+        '  Write-Output "NO_WINDOW"; exit 1',
+        '} catch { Write-Output $_.Exception.Message; exit 1 }',
+      ].join('; ');
+      const r = spawnSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps],
+        { env: { ...process.env, DCP_OPEN_DIR: dir }, timeout: 20000, windowsHide: true });
+      if (r.error) return { ok: false, which: which || 'output', dir, error: r.error.message };
+      const out = String(r.stdout || '').trim();
+      const hit = out.startsWith('OK ') ? Number(out.slice(3)) : 0;
+      if (r.status !== 0 || out.startsWith('NO_WINDOW')) {
+        const reason = out.startsWith('NO_WINDOW')
+          ? '资源管理器窗口未出现（explorer 可能启动即崩溃，例如 DLL 初始化失败）——已如实报告，可到设置里查看目录路径后手动打开'
+          : (out.split(/\r?\n/).filter(Boolean).slice(-1)[0] || ('exit ' + r.status));
+        log.warn(`打开文件夹失败（${which || 'output'}）：${dir} —— ${reason}`);
+        return { ok: false, which: which || 'output', dir, error: reason };
+      }
+      log.info(`已打开文件夹（${which || 'output'}）：${dir}${hit ? '（已聚焦已存在的窗口）' : ''}`);
+      return { ok: true, which: which || 'output', dir, already: hit > 0 };
+    }
+    if (process.platform === 'darwin') spawnSync('open', [dir], { timeout: 10000 });
+    else spawnSync('xdg-open', [dir], { timeout: 10000 });
     log.info(`已打开文件夹（${which || 'output'}）：${dir}`);
     return { ok: true, which: which || 'output', dir };
   } catch (e) {

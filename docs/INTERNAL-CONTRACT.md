@@ -133,7 +133,7 @@ export default function SettingsPage({ api, t, state, refresh, toast }) { /* ...
   `canceled` 的 `resume` 等价于重新排队（本地文件已被删，从头下）。`skipped` 预留给"组件已就绪"。
 - **持久化**：`data/install/tasks.json`（原子写；进度落盘节流 3 s）。**关窗口、重启后端都不丢**：
   启动时 `bootstrap()` 把上次的 `running` 收敛为 `paused` 并写明"后端重启，已中断（点继续从断点续传）"。
-- **调度（第六批：三通道）**：队列分三条**互不阻塞**的通道，数组顺序即调度优先级（先占坑的先得带宽）—— `lane:"comfyui"`（ComfyUI 本体，独立通道，`download.comfyuiConcurrency` 默认 1）、`lane:"prereq"`（前置组件整组，默认 2）、`lane:"model"`（模型，默认 2）。**为什么 comfyui 必须独立**：早期它与 prereq 共用一条上限为 1 的通道，前置组件一开跑 ComfyUI 就只能干等（用户报的"模型/组件下载挤占 ComfyUI"）。老队列数据在 `bootstrap` 时自动迁移到新通道。
+- **调度（第六批：三通道）**：队列分三条**互不阻塞**的通道，数组顺序即调度优先级（先占坑的先得带宽）—— `lane:"comfyui"`（ComfyUI 本体，独立通道，`download.comfyuiConcurrency` 默认 1）、`lane:"prereq"`（前置组件整组，默认 2）、`lane:"model"`（模型，默认 2）。**为什么 comfyui 必须独立**：早期它与 prereq 共用一条上限为 1 的通道，前置组件一开跑 ComfyUI 就只能干等（用户报的"模型/组件下载挤占 ComfyUI"）。老队列数据在 `bootstrap` 时自动迁移到新通道。**v2.0.3：comfyui 任务的解压阶段（`phase:"install"`）会等模型通道跑完再开跑**（解压需独占权重目录；等待原因写在任务的 message/note 上；下载阶段的并行不受影响）。
 - **ComfyUI 两阶段**：`phase:"download"` 阶段只调 `downloadPortableArchive()`（不碰 `runtime/comfyui`），完成后设 `phase:"install"` 并通过 `ctl.released` 交还通道（`finish()` 把它重新排成 `queued`），几秒后再由 `pump()` 调 `installFromArchive()` 解压。模型若在此之前下完，前端按"99% + 等待 ComfyUI"展示（后端状态仍是 `done`）。
 - **暂停/取消/换源的传导**（v1.3.2 补 retask）：`download({control})` 每 1 s 采样一次用户意图，暂停抛
   `code=DCP_PAUSED`（**保留 `.part` 断点**），取消抛 `code=DCP_CANCELED`，运行中"自动换源"抛
