@@ -46,7 +46,7 @@ const paths = {
 
 // v1.3.0（第十二轮）：安装中心 —— 可续装（只装缺的、重装不删权重）、持久化下载队列
 // （暂停/继续/取消/自动换源）、组件与模型分离、模型逐个安装与前置自动入队、自定义模型。
-const VERSION = '2.0.0';
+const VERSION = '2.0.1';
 const BUILD_TAG = 'v' + VERSION;
 
 const DEFAULTS = {

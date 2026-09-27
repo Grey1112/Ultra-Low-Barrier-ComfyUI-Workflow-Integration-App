@@ -143,7 +143,7 @@ window.__ModuleLoader__.load({
 		// 与插件版不同：独立版静态直接托管、**没有 ?rev= 快照机制**，改代码刷新即生效。
 		// 【发版必改】这里与 server/config.js 的 VERSION、package.json 的 version 必须一致
 		//（README「4 处版本号」里的面板这一处）。v1.2.1 起由 scripts/check.js 的 [6] 项强制校验。
-		const BUILD_TAG = "v2.0.0"
+		const BUILD_TAG = "v2.0.1"
 
 		// 实时通道地址：永远走面板自己的来源（同源 relay），不直连 8188。
 		// 纯函数，便于 node 侧冒烟测试直接断言。
@@ -2177,6 +2177,9 @@ window.__ModuleLoader__.load({
 								flashNote(curArtistFaved ? "已取消收藏：" + curArtist : "已收藏画师 " + curArtist + "，可在画师区用「★ 随机收藏」");
 							},
 						}, (curArtistFaved ? "⭐ 取消收藏" : "⭐ 收藏") + "：" + curArtist),
+						// v2.0.1（需求）：图片查看页把该作品对应画师加入自定义分组 ——
+						// 「➕ 分组」放在「收藏」旁，点开选择具体分组；没有分组时显示「无自定义分组」。
+						h(GroupPickerButton, { artist: curArtist, onAdd: toggleArtistGroup, onNote: flashNote }),
 						h("button", {
 							className: "dcp-btn ghost", style: { padding: "2px 8px", fontSize: 11 },
 							title: "切换到「指定画师」模式并固定使用该画师（等同在搜索列表点选）",
@@ -2661,6 +2664,42 @@ window.__ModuleLoader__.load({
 		// 声明依赖 slots 服务：fiber 会等 ui-renderer 把服务备好再跑 apply；
 		// 这同时是 client ctx facade 的服务白名单——不声明就摸不到 ctx.slots。
 		const inject = ["slots"];
+
+		// v2.0.1（需求）：图片查看页的「➕ 分组」—— 把当前图对应画师加入某个自定义分组。
+		// 刻意做成**独立小组件**（自带 useState）：不占用 Panel 的 hook 链（红线：hook 索引只增不移）。
+		// groups 读自 artistStore()（外壳桥维护，画师页/面板双向同步）；为空时按需求显示「无自定义分组」。
+		// 加入动作走既有 toggleArtistGroup（本地乐观更新 + 服务端 __DCP_ARTIST_GROUP__ 双写，失败自动回滚）。
+		function GroupPickerButton(props) {
+			const { artist, onAdd, onNote } = props;
+			const [open, setOpen] = useState(false);
+			const groups = loadGroups();
+			const menuBg = "#16181f";
+			return h("span", { style: { position: "relative", display: "inline-block" } },
+				h("button", {
+					className: "dcp-btn ghost", style: { padding: "2px 8px", fontSize: 11 },
+					title: "把该画师加入自定义分组（分组在画师页管理）",
+					onClick: () => setOpen(!open),
+				}, "➕ 分组"),
+				open ? [
+					h("div", { key: "backdrop", style: { position: "fixed", inset: 0, zIndex: 29 }, onClick: () => setOpen(false) }),
+					h("div", { key: "menu", className: "dcp-group-menu", style: { position: "absolute", top: "calc(100% + 4px)", left: 0, zIndex: 30, minWidth: 170, maxHeight: 220, overflowY: "auto", background: menuBg, border: "1px solid rgba(255,255,255,.22)", borderRadius: 6, boxShadow: "0 8px 22px rgba(0,0,0,.4)" } },
+						groups.length === 0
+							? h("div", { key: "empty", style: { padding: "4px 2px", fontSize: 11, opacity: .75 } }, "无自定义分组")
+							: groups.map((g) => h("div", {
+								key: g.name,
+								style: { padding: "5px 6px", fontSize: 12, cursor: "pointer", borderRadius: 4 },
+								title: "把 " + artist + " 加入「" + g.name + "」",
+								onClick: async () => {
+									setOpen(false);
+									if ((g.items || []).includes(artist)) { if (onNote) onNote("该画师已在此分组中"); return; }
+									if (!onAdd) return;
+									const r = await onAdd(artist, g.name, "add");
+									if (onNote) onNote(r && r.ok ? "已加入分组「" + g.name + "」" : "加入分组失败：" + ((r && r.error) || "未知"));
+								},
+							}, g.name + "（" + (g.items || []).length + "）")),
+					),
+				] : null);
+		}
 
 		exports.apply = function (ctx) {
 			const style = document.createElement("style");

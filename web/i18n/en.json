@@ -890,7 +890,11 @@
     "历史 ": "History ",
     "在资源管理器里打开本机 output 目录（成图都写在这里）": "Open the local output folder in Explorer (all renders land there)",
     "已打开图片文件夹：": "Opened image folder: ",
-    "打开文件夹失败：": "Failed to open folder: "
+    "打开文件夹失败：": "Failed to open folder: ",
+    "➕ 分组": "➕ Group",
+    "无自定义分组": "No custom groups",
+    "该画师已在此分组中": "This artist is already in that group",
+    "把该画师加入自定义分组（分组在画师页管理）": "Add this artist to a custom group (groups are managed on the Artists page)"
   },
   "panelRules": [
     {
@@ -908,6 +912,14 @@
     {
       "pattern": "^已替换负向（(.*?) 字），正向保持不变$",
       "replace": "Replaced negative ($1 chars); positive unchanged"
+    },
+    {
+      "pattern": "^已加入分组「(.+)」$",
+      "replace": "Added to group \"$1\""
+    },
+    {
+      "pattern": "^加入分组失败：(.*)$",
+      "replace": "Failed to add to group: $1"
     }
   ],
   "panelPhrases": [
