@@ -143,7 +143,7 @@ window.__ModuleLoader__.load({
 		// 与插件版不同：独立版静态直接托管、**没有 ?rev= 快照机制**，改代码刷新即生效。
 		// 【发版必改】这里与 server/config.js 的 VERSION、package.json 的 version 必须一致
 		//（README「4 处版本号」里的面板这一处）。v1.2.1 起由 scripts/check.js 的 [6] 项强制校验。
-		const BUILD_TAG = "v2.0.3"
+		const BUILD_TAG = "v2.0.4"
 
 		// 实时通道地址：永远走面板自己的来源（同源 relay），不直连 8188。
 		// 纯函数，便于 node 侧冒烟测试直接断言。
@@ -1597,7 +1597,6 @@ window.__ModuleLoader__.load({
 			// v1.2.1（需求 2）：分组变化即持久化 —— 旧版只有收藏有写回，分组只在"画师页→面板"单向同步，
 			// 于是用户在面板里加过分组后刷新，分组又变回服务端的旧值。
 			useEffect(() => { saveGroups(artistGroups); }, [artistGroups]);
-
 			// final=true 表示 WS 已明确结束该 prompt；否则只有 history 进入终态才算结束。
 			async function collectOutputs(promptId, final) {
 				if (!promptId) return;

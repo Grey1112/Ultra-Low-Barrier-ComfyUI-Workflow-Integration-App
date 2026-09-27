@@ -138,10 +138,14 @@ function translateTextNode(node) {
   if (node.__dcpOrig === undefined) node.__dcpOrig = raw;    // 记住原文：切语言时先还原
   const want = out !== trimmed
     ? raw.slice(0, raw.indexOf(trimmed)) + out + raw.slice(raw.indexOf(trimmed) + trimmed.length)
-    : node.__dcpOrig;
+    : raw;    // v2.0.4 修复：无词典命中时**保持 React 的当前文本** —— 旧实现回退到首次见到的
+              // __dcpOrig，会把 React 的合法更新（如 收藏↔取消收藏 翻转）打回旧原文
+              //（实测：取消收藏 4 个汉字 > 收藏 2 个，通过 cjkCount 守卫被还原，标签永远不翻转）。
   if (want !== raw && cjkCount(want) < cjkCount(raw)) {
     node.nodeValue = want;
     node.__dcpOut = want;    // 记录“我写进去的值”：还原时只有它没被 React 改过才回退
+  } else {
+    node.__dcpOut = undefined;   // 未写入：清掉输出记录，React 的后续更新按新原文处理
   }
 }
 
@@ -151,6 +155,10 @@ function translateAttrs(el) {
     const cur = el.getAttribute(attr);
     if (cur === null || cur === undefined) continue;
     const store = '__dcpOrig_' + attr;
+    // v2.0.4 修复：React 更新了属性（≠ 我们写进去的译文）→ 旧原文作废，按当前内容重新记录
+    //（与 translateTextNode 同源缺陷：title 随状态翻转时会被旧原文打回，如 收藏↔取消收藏 的提示）。
+    const prevOut = el['__dcpOut_' + attr];
+    if (prevOut !== undefined && cur !== prevOut) { el[store] = undefined; el['__dcpOut_' + attr] = undefined; }
     if (el[store] === undefined) {
       if (!CJK.test(cur)) continue;
       el[store] = cur;
@@ -159,6 +167,8 @@ function translateAttrs(el) {
     if (cur !== want && cjkCount(want) < cjkCount(cur)) {
       el.setAttribute(attr, want);
       el['__dcpOut_' + attr] = want;
+    } else if (cur === want) {
+      el['__dcpOut_' + attr] = undefined;   // 无词典命中：清输出记录，React 后续更新按新原文处理
     }
   }
 }
