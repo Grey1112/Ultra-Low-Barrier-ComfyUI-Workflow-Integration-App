@@ -23,8 +23,11 @@ const PREFER_TTL_MS = 10 * 60 * 1000;     // 同一"来源家族"内 10 分钟�
 const preferByFamily = new Map();         // familyKey → { url, via, mbps, at }
 
 // v1.3.0：暂停 / 取消的专用错误码（install-queue.js 据此区分"用户暂停"与"真失败"）。
+// v1.3.2：新增「自动换源」—— 运行中的任务被 retask 时，引擎立刻中止当前来源（断点保留），
+//         由队列重新入队并续传；不能把它当成"这个源失败"（那样会继续试下一个源）。
 const PAUSED = 'DCP_PAUSED';
 const CANCELED = 'DCP_CANCELED';
+const RETASK = 'DCP_RETASK';
 function codedError(message, code) {
   const e = new Error(message);
   e.code = code;
@@ -85,7 +88,7 @@ async function probeSpeed(url) {
  * 把候选源按实测速度就地重排，并记住这个"来源家族"里最快的是谁。
  * 返回 true 表示真的测过（顺序被改过）。跳过的情况都会明确说明原因（不静默）。
  */
-async function pickFastest(candidates, { name, say, expectBytes, disabled } = {}) {
+async function pickFastest(candidates, { name, say, expectBytes, disabled, check } = {}) {
   if (disabled || !Array.isArray(candidates) || candidates.length < 2) return false;
   const log2 = typeof say === 'function' ? say : (m, l) => log.info(m);
   const key = familyKeyOf(candidates[0].url);
@@ -114,12 +117,16 @@ async function pickFastest(candidates, { name, say, expectBytes, disabled } = {}
     for (;;) {
       const c = queue.shift();
       if (!c) return;
+      // v1.3.2：每个源探完都看一眼用户意图 —— 逐源测速阶段也要能被暂停/取消/换源打断
+      //（此前这段最长几十秒完全不响应，用户点暂停像"无效"）。
+      if (typeof check === 'function') check();
       const r = await probeSpeed(c.url);
       rows.push({ cand: c, r });
       const label = c.source === 'official' ? '官方源' : (c.via || c.source);
       log2(`  测速 ${label}：` + (r.ok
         ? `${r.mbps.toFixed(2)} MB/s（首字节 ${r.firstByteMs} ms）`
         : `失败（${r.error || ('HTTP ' + r.status)}）`), r.ok ? 'info' : 'warn');
+      if (typeof check === 'function') check();
     }
   };
   await Promise.all(Array.from({ length: Math.min(PROBE_CONCURRENCY, candidates.length) }, worker));
@@ -356,6 +363,7 @@ async function download(o) {
     const st = control.getState();
     if (st === 'canceled') throw codedError('任务已被用户取消', CANCELED);
     if (st === 'paused') throw codedError('任务已暂停（断点已保留，可随时继续）', PAUSED);
+    if (st === 'retask') throw codedError('已自动换源：中止当前下载（断点保留，马上换来源续传）', RETASK);
   };
   checkControl();
 
@@ -414,7 +422,8 @@ async function download(o) {
   }
   checkControl();
   // v1.2.0：先逐源测一段，把最快的排到最前（并在 10 分钟内记住它）；o.noProbe 可显式关掉。
-  await pickFastest(candidates, { name, say, expectBytes, disabled: o.noProbe === true });
+  // v1.3.2：测速过程也响应暂停/取消/换源（check = checkControl）。
+  await pickFastest(candidates, { name, say, expectBytes, disabled: o.noProbe === true, check: control && typeof control.getState === 'function' ? checkControl : null });
   const timeoutMs = settings.download?.officialTimeoutMs || 10000;
   const startDeadlineMs = settings.download?.startDeadlineMs || 10000;
   const stallDeadlineMs = settings.download?.stallDeadlineMs || 15000;
@@ -471,6 +480,14 @@ async function download(o) {
       } catch (e) {
         // v1.3.0：暂停/取消必须**立刻**向上抛（不能当成"这个源失败、换下一个"），
         // 否则用户点了取消，程序还要把剩下 8 个源各试两遍。
+        // v1.3.2：retask 同理。注意带出去的是 **failedHosts（真正失败过的源）**，
+        // 当前正在下的这个源不算"已失败" —— 它只是被降级重测，不该被拉黑
+        //（否则"当前源是唯一好源"时，换源会把任务直接换成全失败）。
+        if (e && e.code === RETASK) {
+          e.triedHosts = triedHosts.slice();
+          e.failedHosts = triedHosts.slice(0, -1);
+          throw e;
+        }
         if (e && (e.code === PAUSED || e.code === CANCELED)) throw e;
         lastErr = e;
         attempts.push(`${tag}#${round}: ${e.message}`);
@@ -627,10 +644,12 @@ async function download(o) {
       }
       // ── v1.3.0：队列控制（暂停 / 取消）────────────────────────────────────
       // 1 s 一次的窗口里检查一次用户意图：暂停保留 .part 断点（可续传），取消直接中止。
+      // v1.3.2：retask（自动换源）同样在这里被采样 —— 中止当前来源（断点保留），队列马上续传。
       if (ctx.control && typeof ctx.control.getState === 'function') {
         const st = ctx.control.getState();
         if (st === 'canceled') { die(codedError('任务已被用户取消', CANCELED)); return; }
         if (st === 'paused') { die(codedError('任务已暂停（断点已保留，可随时继续）', PAUSED)); return; }
+        if (st === 'retask') { die(codedError('已自动换源：中止当前下载（断点保留，马上换来源续传）', RETASK)); return; }
       }
       // ── v1.3.0：进度回调（队列据此落盘，关窗口/重启后端都还看得到进度）──
       if (typeof ctx.onProgress === 'function') {
@@ -778,7 +797,7 @@ async function probe(url, settings, timeoutMs) {
 
 module.exports = {
   download, buildCandidates, probe, speedTest, normalizeDownloadUrl, probeSpeed, pickFastest, preferByFamily,
-  PAUSED, CANCELED, forgetPreferred,
+  PAUSED, CANCELED, RETASK, forgetPreferred,
 };
 
 /** v1.3.0：「自动换源」用 —— 忘掉某个来源家族的最快源记忆，让下一次重新真测一遍。 */

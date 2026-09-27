@@ -13,6 +13,8 @@
 #   -NoBrowser   不自动打开浏览器
 #   -NoTray      不装托盘图标、也不最小化控制台（默认：就绪后最小化到任务栏 + 常驻托盘图标）
 #   -Foreground  把后端日志直接打到当前控制台（默认写 logs\server.log 并跟随）
+#   v2.0.0：start.cmd 默认以**隐藏窗口**启动本脚本（前台不再有常驻控制台，误关窗口不会杀掉后端）；
+#   隐藏模式下的致命失败用弹窗告警（Show-FatalPopup），正常路径照旧：自动开浏览器 + 托盘图标。
 
 [CmdletBinding()]
 param(
@@ -35,6 +37,14 @@ try {
 function Write-Info($m) { Write-Host ("[启动器] " + $m) }
 function Write-Warn2($m) { Write-Host ("[启动器][警告] " + $m) -ForegroundColor Yellow }
 function Write-Err2($m) { Write-Host ("[启动器][错误] " + $m) -ForegroundColor Red }
+
+# v2.0.0：隐藏启动模式下控制台不可见，致命失败必须用弹窗告警（WScript.Shell.Popup，兼容 PS 5.1/7）。
+function Show-FatalPopup([string]$msg) {
+    try {
+        $w = New-Object -ComObject WScript.Shell
+        $null = $w.Popup($msg, 0, 'comfy-panel-standalone 启动失败', 16)
+    } catch { }
+}
 
 # ── 路径推导（相对，不写死任何机器路径） ──────────────────
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -98,6 +108,7 @@ $Host0 = if ($Lan) { '0.0.0.0' } else { '127.0.0.1' }
 $node = Resolve-Node
 if (-not $node) {
     Write-Err2 "没有可用的 Node 运行时。请联网后重跑本脚本（会自动下载便携 Node），或手动把 node.exe 放到 runtime\node\ 下。"
+    Show-FatalPopup "没有可用的 Node 运行时。请联网后重跑（会自动下载便携 Node），或把 node.exe 放到 runtime\\node\\ 下。"
     exit 1
 }
 
@@ -135,6 +146,7 @@ while ((Get-Date) -lt $deadline) {
 }
 
 if (-not $ready) {
+    Show-FatalPopup "后端在 60 秒内没有就绪（常见：端口被其它程序占用）。日志见 logs 文件夹；也可用 start.cmd -Foreground 在可见控制台查看详细输出。"
     Write-Err2 "后端在 60 秒内没有就绪。最后几行输出："
     if (Test-Path $OutLog) { Get-Content $OutLog -Tail 15 | ForEach-Object { Write-Host ("  " + $_) } }
     if (Test-Path $ErrLog) { Get-Content $ErrLog -Tail 15 | ForEach-Object { Write-Host ("  " + $_) -ForegroundColor Red } }
@@ -170,7 +182,11 @@ if (-not $NoTray -and -not $Foreground) {
                 '-BackendPid', [string]$proc.Id,
                 '-Port', [string]$ready,
                 '-Root', "`"$Root`"")
-            Start-Process -FilePath 'powershell.exe' -ArgumentList $trayArgs -WindowStyle Hidden | Out-Null
+            # v2.0.0：经 conhost --headless 启动托盘 —— 本机默认终端是 Windows Terminal 时，
+            # 直接启动 powershell.exe 的隐藏控制台会被 WT 接管成可见窗口；headless 宿主强制无窗口。
+            # ⚠️ conhost 之后必须显式跟 'powershell.exe'（conhost 的第一个参数是它要跑的命令，
+            #    漏掉会让 conhost 拿着 -NoProfile 当命令执行 → 静默失败 → 托盘不出现，实测踩过）。
+            Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\conhost.exe') -ArgumentList (@('--headless', 'powershell.exe') + $trayArgs) -WindowStyle Hidden | Out-Null
             $trayStarted = $true
             Write-Info "托盘图标已就绪（右键可退出）。控制台将最小化到任务栏。"
         } catch {

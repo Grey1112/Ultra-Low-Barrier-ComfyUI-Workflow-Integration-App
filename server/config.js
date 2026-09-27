@@ -46,7 +46,7 @@ const paths = {
 
 // v1.3.0（第十二轮）：安装中心 —— 可续装（只装缺的、重装不删权重）、持久化下载队列
 // （暂停/继续/取消/自动换源）、组件与模型分离、模型逐个安装与前置自动入队、自定义模型。
-const VERSION = '1.3.0';
+const VERSION = '2.0.0';
 const BUILD_TAG = 'v' + VERSION;
 
 const DEFAULTS = {
@@ -218,6 +218,9 @@ function normalize(s) {
   }
   out.llm.api.reasoning = ['off', 'low', 'high', 'max'].includes(out.llm.api.reasoning) ? out.llm.api.reasoning : 'off';
   delete out.llm.api.thinking;
+  // v1.3.3：`hasKey` 是 GET /app/settings 下发时的派生字段（布尔，不是设置项）——设置页旧实现把它
+  // 跟着表单回写进了 settings.json（实测）。这里防御性剥离，已污染的存量文件在下次保存时自愈。
+  delete out.llm.api.hasKey;
   out.llm.api.retries = clampInt(out.llm.api.retries, 0, 5, 2);
   out.llm.api.idleMs = clampInt(out.llm.api.idleMs, 5000, 600000, 90000);
   // 上下文策略：界面保留历史（keepMessages），默认不把上下文发给模型。

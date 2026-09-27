@@ -305,6 +305,19 @@ export default function InstallPage(props) {
             + bytesText
             + (phaseText ? ' · ' + phaseText : '')
             + (spd ? ' · ' + spd : '')));
+          // v1.3.2：组件行就地给「暂停/继续」—— 此前任务级控制只在下方下载队列里，
+          // 用户盯着组件进度条找不到暂停入口（反馈："暂停功能可能不在前端显示"）
+          if (prog.state === 'paused') {
+            buttons.push(h('button', {
+              className: 'btn tiny primary', key: 'resume',
+              disabled: busy === prog.taskId + ':resume', onClick: () => act('resume', prog.taskId),
+            }, t('queue.resume')));
+          } else {
+            buttons.push(h('button', {
+              className: 'btn tiny', key: 'pause',
+              disabled: busy === prog.taskId + ':pause', onClick: () => act('pause', prog.taskId),
+            }, t('queue.pause')));
+          }
         }
         buttons.push(h('button', {
           className: 'btn tiny' + (g.ok ? '' : ' primary'),
@@ -423,6 +436,20 @@ export default function InstallPage(props) {
       if (active) {
         actions.push(h('span', { className: 'muted', key: 'p' },
           v.waiting ? t('queue.waitingComfy') + ' 99%' : (t(STATE_LABEL[v.state] || '') + ' ' + v.percent + '%')));
+        // v1.3.2：模型行就地给「暂停/继续」（与组件行同理由；等待 ComfyUI 的行不需要控制）
+        if (!v.waiting && tk) {
+          if (tk.state === 'paused') {
+            actions.push(h('button', {
+              className: 'btn tiny primary', key: 'resume',
+              disabled: busy === tk.id + ':resume', onClick: () => act('resume', tk.id),
+            }, t('queue.resume')));
+          } else if (['queued', 'running'].includes(tk.state)) {
+            actions.push(h('button', {
+              className: 'btn tiny', key: 'pause',
+              disabled: busy === tk.id + ':pause', onClick: () => act('pause', tk.id),
+            }, t('queue.pause')));
+          }
+        }
       }
       actions.push(h('button', {
         className: 'btn tiny' + (m.installed ? '' : ' primary'), key: 'a',

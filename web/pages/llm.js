@@ -321,13 +321,19 @@ export default function LlmPage(props) {
   // v1.1.0（修复 B6）：就绪度必须按「推理来源」判定。产品默认来源是外接 API，而旧实现只看本地
   // llama.cpp 运行时 → provider 恒读不到（/app/state 不下发）→ 永远走本地分支 → 一条消息都发不出。
   // api：baseUrl+model 齐（api.ok）且填了 Key 才可发；local：才要求运行时在位。
-  const provider = (runtime && runtime.provider) || 'local';
+  // v1.3.3（修复"设置里填好 Key、连接测试通过，生成仍提示缺 Key"）：本页是**常驻标签页**，
+  // /app/llm/status 只在挂载时拉一次 —— 用户在「设置」存好 Key 回来后这份缓存还是旧的 hasKey:false，
+  // 门控就永远卡在"缺 Key"（实测复现）。就绪判定改用外壳 5 秒轮询的 state.llm（总是新鲜）为准，
+  // 本页自己的 status 只在 state 缺字段时兜底。
+  const stateLlm = (state && state.llm) || null;
+  const provider = (stateLlm && stateLlm.provider) || (runtime && runtime.provider) || 'local';
   const isApiProvider = provider === 'api';
+  const apiInfo = (stateLlm && stateLlm.api) ? stateLlm.api : ((runtime && runtime.api) || null);
   const notReady = isApiProvider
-    ? !(runtime && runtime.api && runtime.api.ok && runtime.api.hasKey)
+    ? !(apiInfo && apiInfo.ok && apiInfo.hasKey)
     : !!(runtime && runtime.runtime && runtime.runtime.ok === false);
   const notReadyMsg = isApiProvider
-    ? ((runtime && runtime.api && runtime.api.ok) ? t('llm.provider.apiNeedKey') : t('llm.provider.apiMissing'))
+    ? ((apiInfo && apiInfo.ok) ? t('llm.provider.apiNeedKey') : t('llm.provider.apiMissing'))
     : t('llm.error.notReady');
 
   const send = useCallback(async () => {
@@ -926,21 +932,21 @@ export default function LlmPage(props) {
     h('div', { className: 'card' },
       h('div', { className: 'card-title' }, t('llm.provider.title')),
       h('div', { className: 'row tight' },
-        h('span', { className: 'badge' + ((runtime && runtime.provider === 'api') ? ' warn' : ' good') },
-          (runtime && runtime.provider === 'api') ? t('llm.provider.api') : t('llm.provider.local')),
-        (runtime && runtime.provider === 'api')
-          ? h('span', { className: 'badge' + (runtime.api && runtime.api.ok ? ' good' : ' bad') },
-            (runtime.api && runtime.api.ok) ? t('llm.provider.apiReady') : t('llm.provider.apiMissing'))
+        h('span', { className: 'badge' + (isApiProvider ? ' warn' : ' good') },
+          isApiProvider ? t('llm.provider.api') : t('llm.provider.local')),
+        isApiProvider
+          ? h('span', { className: 'badge' + (apiInfo && apiInfo.ok ? ' good' : ' bad') },
+            (apiInfo && apiInfo.ok) ? t('llm.provider.apiReady') : t('llm.provider.apiMissing'))
           : null),
-      (runtime && runtime.provider === 'api')
-        ? h('div', { className: 'hint' }, (runtime.api && runtime.api.baseUrl ? runtime.api.baseUrl + ' · ' : '') + (runtime.api ? runtime.api.model : '') + (runtime.api && runtime.api.hasKey ? ' · key ✓' : ' · no key'))
+      isApiProvider
+        ? h('div', { className: 'hint' }, (apiInfo && apiInfo.baseUrl ? apiInfo.baseUrl + ' · ' : '') + (apiInfo ? apiInfo.model : '') + (apiInfo && apiInfo.hasKey ? ' · key ✓' : ' · no key'))
         : null,
       // 外接 API 是默认来源：没填 Key 时把"下一步做什么"直接写在这里，别让用户对着报错猜。
-      (runtime && runtime.provider === 'api' && !(runtime.api && runtime.api.hasKey))
+      isApiProvider && !(apiInfo && apiInfo.hasKey)
         ? h('div', { className: 'hint' }, t('llm.provider.apiNeedKey'))
         : null,
       // 推理挡位（四挡）：off / low / high / max —— 只有外接 API 需要它
-      (runtime && runtime.provider === 'api')
+      isApiProvider
         ? h('div', { className: 'row tight' },
           h('span', { className: 'hint' }, t('llm.reasoning.label')),
           h('select', {

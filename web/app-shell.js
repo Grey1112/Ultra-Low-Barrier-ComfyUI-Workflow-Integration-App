@@ -241,6 +241,11 @@ function App() {
   const [lang, setLang] = useState('zh');
   const [renderKey, setRenderKey] = useState(0);
   const [logOpen, setLogOpen] = useState(false);
+  // 首次安装指引条可手动关闭；记住选择（纯界面偏好，localStorage，不入 settings），
+  // 装好引擎（setup.completed）后横幅本来就会自动消失。
+  const [wizardDismissed, setWizardDismissed] = useState(() => {
+    try { return localStorage.getItem('dcp-wizard-dismissed') === '1'; } catch { return false; }
+  });
   const [logs, setLogs] = useState([]);
   const [bootError, setBootError] = useState('');
   // v1.2.2（U2）：与后端失联的单条可操作提示。null = 连通（或还没断过）；
@@ -639,7 +644,8 @@ function App() {
     ? (llmReady ? t('llm.provider.apiReady') : t('llm.provider.apiNeedKey'))
     : (llmReady ? t('llm.runtime.ready') : t('llm.error.notReady'));
 
-  const pageProps = { api, post, put, t, state, settings, refresh, toast, openJobModal, fmtBytes };
+  // v2.0.0：changeLang 下发给设置页 —— 语言卡片与顶栏按钮同一通道（立即生效，而不是等旧版「保存」）。
+  const pageProps = { api, post, put, t, state, settings, refresh, toast, openJobModal, fmtBytes, changeLang };
 
   const renderPage = (id) => {
     const map = {
@@ -704,6 +710,13 @@ function App() {
             toast(done ? t('toast.copied') : t('toast.failed'), done ? 'ok' : 'warn');
           },
         }, t('shell.copyAddress')) : null,
+        // v2.0.0：跳转 ComfyUI 原生界面 —— 原先在生图面板头部，面板头部去除重复标题后移到这里，
+        // 四个页面都可用（端口取后端自证的 comfy.port）。
+        h('button', {
+          className: 'btn tiny',
+          title: t('shell.openComfyTitle'),
+          onClick: () => window.open('http://127.0.0.1:' + (state.comfy.port || 8188), '_blank', 'noopener'),
+        }, t('shell.openComfy')),
         h('span', { className: 'badge' + (llmReady ? ' good' : ' warn'), title: llmBadgeTitle },
           llmSource + ' ' + (llmReady ? t('shell.llmReady') : t('shell.llmAbsent'))),
         !llmIsApi && state.llm.model ? h('span', { className: 'badge' }, state.llm.model) : null,
@@ -739,10 +752,17 @@ function App() {
                 },
               }, t('shell.copyAddress')) : null,
               h('button', { className: 'btn tiny primary', onClick: () => { refresh(); } }, t('shell.linkLostRetry')))) : null,
-          !setupDone ? h('div', { className: 'wizard-banner' },
+          (!setupDone && !wizardDismissed) ? h('div', { className: 'wizard-banner' },
             h('span', null, t('shell.firstRunHint')),
             h('span', { className: 'sp' }),
-            h('button', { className: 'btn primary tiny', onClick: () => go('install') }, t('nav.install'))) : null,
+            h('button', { className: 'btn primary tiny', onClick: () => go('install') }, t('nav.install')),
+            h('button', {
+              className: 'btn tiny', title: t('shell.wizardDismiss'),
+              onClick: () => {
+                setWizardDismissed(true);
+                try { localStorage.setItem('dcp-wizard-dismissed', '1'); } catch { /* 忽略隐私模式 */ }
+              },
+            }, '✕')) : null,
           errors.length ? h('div', { className: 'error' },
             errors.map((i) => i.message + ' → ' + i.fix).join('\n'),
             h('div', null, h('button', { className: 'btn tiny', style: { marginTop: 6 }, onClick: () => go('settings') }, t('nav.settings')))) : null),

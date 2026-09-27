@@ -143,7 +143,7 @@ window.__ModuleLoader__.load({
 		// 与插件版不同：独立版静态直接托管、**没有 ?rev= 快照机制**，改代码刷新即生效。
 		// 【发版必改】这里与 server/config.js 的 VERSION、package.json 的 version 必须一致
 		//（README「4 处版本号」里的面板这一处）。v1.2.1 起由 scripts/check.js 的 [6] 项强制校验。
-		const BUILD_TAG = "v1.3.0";
+		const BUILD_TAG = "v2.0.0"
 
 		// 实时通道地址：永远走面板自己的来源（同源 relay），不直连 8188。
 		// 纯函数，便于 node 侧冒烟测试直接断言。
@@ -2098,7 +2098,9 @@ window.__ModuleLoader__.load({
 			const elapsedText = "已用 " + String(Math.floor(elapsedSec / 60)).padStart(2, "0") + ":" + String(elapsedSec % 60).padStart(2, "0");
 
 			return h("div", { className: "dcp-panel" + (embed ? " dcp-embedded" : "") + " dcp-layout-" + (layoutProp || "3") },
-				h("div", { className: "dcp-head" },
+				// v1.3.4：工作台嵌入（embed）时不再渲染面板头部 —— 标题与外壳侧栏品牌重复、
+				// 在线状态与外壳顶栏徽标重复，「跳转 ComfyUI」由外壳顶栏统一提供；悬浮球独立模式保留完整头部。
+				embed ? null : h("div", { className: "dcp-head" },
 					h("span", { title: "面板构建 " + BUILD_TAG + "；独立版为静态托管，改前端代码刷新页面即生效" }, "🎨 超低门槛 ComfyUI 工作流集成应用 " + BUILD_TAG),
 					h("span", { className: "dcp-dot " + (online ? "dcp-dot-on" : "dcp-dot-off") }),
 					h("span", { className: "dcp-muted" }, online ? "在线" : "离线"),
@@ -2577,64 +2579,64 @@ window.__ModuleLoader__.load({
 
 		const CSS = `
 .dcp-root{display:contents;font:13px/1.5 system-ui,"Segoe UI","Microsoft YaHei",sans-serif}
-.dcp-fab{pointer-events:auto;position:absolute;right:18px;bottom:18px;width:44px;height:44px;border-radius:50%;border:1px solid rgba(128,128,128,.35);background:rgba(28,28,32,.92);color:#fff;font-size:20px;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.3)}
+.dcp-fab{pointer-events:auto;position:absolute;right:18px;bottom:18px;width:44px;height:44px;border-radius:50%;border:1px solid rgba(128,128,128,.35);background:rgba(23,26,35,.95);color:#fff;font-size:20px;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.3)}
 .dcp-fab:hover{transform:scale(1.07)}
-.dcp-panel{pointer-events:auto;position:absolute;top:0;right:0;bottom:0;width:400px;max-width:94vw;background:rgba(22,22,26,.97);color:#e9e9ef;display:flex;flex-direction:column;box-shadow:-10px 0 30px rgba(0,0,0,.35);border-left:1px solid rgba(255,255,255,.1);z-index:5}
-.dcp-head{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.1);font-weight:600;font-size:14px}
+.dcp-panel{pointer-events:auto;position:absolute;top:0;right:0;bottom:0;width:400px;max-width:94vw;background:rgba(23,26,35,.98);color:#eceef4;display:flex;flex-direction:column;box-shadow:-10px 0 30px rgba(0,0,0,.35);border-left:1px solid rgba(255,255,255,.08);z-index:5}
+.dcp-head{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.08);font-weight:600;font-size:14px}
 .dcp-head .sp{flex:1}
-.dcp-btn{background:#2f6feb;color:#fff;border:0;border-radius:6px;padding:4px 10px;cursor:pointer;font:inherit;font-size:12px}
-.dcp-btn.ghost{background:rgba(255,255,255,.12);color:#eceff5}
+.dcp-btn{background:#6366f1;color:#fff;border:0;border-radius:8px;padding:4px 10px;cursor:pointer;font:inherit;font-size:12px;transition:filter .15s ease,box-shadow .15s ease}
+.dcp-btn.ghost{background:rgba(255,255,255,.1);color:#eceff5}
 .dcp-btn.warn{background:#c2410c;color:#fff}
-.dcp-btn.test{background:rgba(34,197,94,.16);border:1px solid rgba(74,222,128,.45);color:#86efac}
+.dcp-btn.test{background:rgba(52,211,153,.14);border:1px solid rgba(52,211,153,.45);color:#6ee7b7}
 .dcp-btn:disabled{opacity:.45;cursor:default}
 .dcp-btn:not(:disabled):hover{filter:brightness(1.12)}
 .dcp-body{flex:1;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:11px}
-.dcp-sec{font-size:11px;font-weight:700;letter-spacing:.08em;color:#8fb4ff;margin-top:2px}
+.dcp-sec{font-size:11px;font-weight:700;letter-spacing:.08em;color:#a5b4fc;margin-top:2px}
 .dcp-field{display:flex;flex-direction:column;gap:3px;min-width:0}
-.dcp-field>span{font-size:11px;color:#c4c4cf}
-.dcp-panel input,.dcp-panel select,.dcp-panel textarea{background:rgba(255,255,255,.07);color:#f2f2f6;border:1px solid rgba(255,255,255,.14);border-radius:6px;padding:5px 8px;font:inherit;width:100%;box-sizing:border-box}
-.dcp-panel input[type=checkbox]{width:auto;accent-color:#2f6feb;flex:none}
+.dcp-field>span{font-size:11px;color:#c6c9d6}
+.dcp-panel input,.dcp-panel select,.dcp-panel textarea{background:rgba(255,255,255,.05);color:#f2f3f7;border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:5px 8px;font:inherit;width:100%;box-sizing:border-box;transition:border-color .15s ease,box-shadow .15s ease}
+.dcp-panel input[type=checkbox]{width:auto;accent-color:#6366f1;flex:none}
 .dcp-panel textarea{resize:vertical;min-height:60px}
-.dcp-panel input:focus,.dcp-panel select:focus,.dcp-panel textarea:focus{outline:1.5px solid #5b9bff}
-.dcp-panel option{background:#1c1c22;color:#f2f2f6}
-.dcp-seg{display:flex;border:1px solid rgba(255,255,255,.16);border-radius:7px;overflow:hidden}
-.dcp-seg button{flex:1;min-width:0;background:transparent;color:#cfcfd8;border:0;padding:6px 2px;cursor:pointer;font:inherit;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.dcp-seg button.on{background:#2f6feb;color:#fff}
+.dcp-panel input:focus,.dcp-panel select:focus,.dcp-panel textarea:focus{outline:none;border-color:rgba(129,140,248,.7);box-shadow:0 0 0 3px rgba(129,140,248,.18)}
+.dcp-panel option{background:#1c1f2b;color:#f2f3f7}
+.dcp-seg{display:flex;border:1px solid rgba(255,255,255,.12);border-radius:7px;overflow:hidden}
+.dcp-seg button{flex:1;min-width:0;background:transparent;color:#c6c9d6;border:0;padding:6px 2px;cursor:pointer;font:inherit;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:background-color .15s ease,color .15s ease}
+.dcp-seg button.on{background:#6366f1;color:#fff}
 .dcp-seg button:disabled{opacity:.4}
-.dcp-pair{font-size:11px;color:#a6a6b3;background:rgba(255,255,255,.05);border-radius:6px;padding:5px 8px;overflow-wrap:anywhere}
-.dcp-stats{display:flex;flex-direction:column;gap:6px;font-size:11px;color:#cfcfd8}
-.dcp-bar{height:6px;border-radius:3px;background:rgba(255,255,255,.1);overflow:hidden}
-.dcp-bar>i{display:block;height:100%;background:linear-gradient(90deg,#2f6feb,#22c55e);transition:width .3s}
+.dcp-pair{font-size:11px;color:#9aa0b0;background:rgba(255,255,255,.05);border-radius:8px;padding:5px 8px;overflow-wrap:anywhere}
+.dcp-stats{display:flex;flex-direction:column;gap:6px;font-size:11px;color:#c6c9d6}
+.dcp-bar{height:6px;border-radius:3px;background:rgba(255,255,255,.09);overflow:hidden}
+.dcp-bar>i{display:block;height:100%;background:linear-gradient(90deg,#6366f1,#34d399);transition:width .3s}
 .dcp-bar.vram>i{background:#f59e0b}
 .dcp-bar.ram>i{background:#8b5cf6}
-.dcp-img{width:100%;border-radius:8px;border:1px solid rgba(255,255,255,.12);cursor:zoom-in;display:block;background:#111}
+.dcp-img{width:100%;border-radius:8px;border:1px solid rgba(255,255,255,.1);cursor:zoom-in;display:block;background:#111}
 .dcp-thumbs{display:flex;gap:6px;flex-wrap:wrap}
-.dcp-thumb{width:64px;height:64px;object-fit:cover;border-radius:6px;border:1px solid rgba(255,255,255,.18);cursor:pointer;opacity:.75}
-.dcp-thumb.cur{outline:2px solid #5b9dff;opacity:1}
+.dcp-thumb{width:64px;height:64px;object-fit:cover;border-radius:6px;border:1px solid rgba(255,255,255,.16);cursor:pointer;opacity:.75}
+.dcp-thumb.cur{outline:2px solid #818cf8;opacity:1}
 /* v1.2.0：历史缩略图上的删除按钮（两步确认：🗑 → 确认删除） */
 .dcp-thumb-wrap{position:relative;display:inline-block}
-.dcp-thumb-del{position:absolute;right:-2px;top:-4px;background:rgba(24,24,30,.92);color:#fda4af;border:1px solid rgba(248,113,113,.45);border-radius:5px;font-size:10px;line-height:1;padding:2px 4px;cursor:pointer;font-family:inherit}
-.dcp-thumb-del:hover{background:rgba(248,113,113,.22)}
+.dcp-thumb-del{position:absolute;right:-2px;top:-4px;background:rgba(15,17,24,.92);color:#fda4af;border:1px solid rgba(251,113,133,.45);border-radius:5px;font-size:10px;line-height:1;padding:2px 4px;cursor:pointer;font-family:inherit}
+.dcp-thumb-del:hover{background:rgba(251,113,133,.22)}
 .dcp-thumb-del.armed{background:#b91c1c;color:#fff;border-color:#ef4444;font-size:10px;padding:2px 6px}
-.dcp-refimg{width:64px;height:64px;object-fit:cover;border-radius:6px;border:1px solid rgba(255,255,255,.18);display:block;flex:none}
-.dcp-err{color:#fda4af;font-size:12px;white-space:pre-wrap;background:rgba(248,113,113,.08);border:1px solid rgba(248,113,113,.25);border-radius:6px;padding:6px 8px}
-.dcp-note{color:#fcd34d;font-size:12px;background:rgba(251,191,36,.08);border-radius:6px;padding:4px 8px}
-.dcp-empty{color:#a2a2b0;font-size:12px;text-align:center;padding:18px 0;border:1px dashed rgba(255,255,255,.16);border-radius:8px}
-.dcp-muted{color:#a6a6b3;font-size:11px}
+.dcp-refimg{width:64px;height:64px;object-fit:cover;border-radius:6px;border:1px solid rgba(255,255,255,.16);display:block;flex:none}
+.dcp-err{color:#fda4af;font-size:12px;white-space:pre-wrap;background:rgba(251,113,133,.08);border:1px solid rgba(251,113,133,.3);border-radius:8px;padding:6px 8px}
+.dcp-note{color:#fbbf24;font-size:12px;background:rgba(251,191,36,.08);border-radius:8px;padding:4px 8px}
+.dcp-empty{color:#9aa0b0;font-size:12px;text-align:center;padding:18px 0;border:1px dashed rgba(255,255,255,.16);border-radius:8px}
+.dcp-muted{color:#9aa0b0;font-size:11px}
 .dcp-dot{width:8px;height:8px;border-radius:4px;display:inline-block}
-.dcp-dot.dcp-dot-on{background:#4ade80}.dcp-dot.dcp-dot-off{background:#f87171}
+.dcp-dot.dcp-dot-on{background:#34d399}.dcp-dot.dcp-dot-off{background:#fb7185}
 .dcp-view{position:relative}
-.dcp-img.live{border-color:rgba(91,157,255,.6)}
-.dcp-live{display:flex;align-items:center;gap:6px;font-size:11px;color:#d8d8e2;margin-top:6px}
+.dcp-img.live{border-color:rgba(129,140,248,.65)}
+.dcp-live{display:flex;align-items:center;gap:6px;font-size:11px;color:#d3d6e2;margin-top:6px}
 .dcp-live .sp{flex:1}
 .dcp-live-tag{background:rgba(255,255,255,.14);border-radius:4px;padding:1px 6px;font-size:10px;flex:none;color:#ececf4}
-.dcp-live-tag.on{background:#2f6feb;color:#fff}
-.dcp-live-bar{height:4px;border-radius:2px;background:rgba(255,255,255,.1);overflow:hidden;margin-top:6px}
-.dcp-live-bar>i{display:block;height:100%;background:linear-gradient(90deg,#2f6feb,#22c55e);transition:width .3s}
-.dcp-details{border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:0 10px}
+.dcp-live-tag.on{background:#6366f1;color:#fff}
+.dcp-live-bar{height:4px;border-radius:2px;background:rgba(255,255,255,.09);overflow:hidden;margin-top:6px}
+.dcp-live-bar>i{display:block;height:100%;background:linear-gradient(90deg,#6366f1,#34d399);transition:width .3s}
+.dcp-details{border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:0 10px}
 .dcp-secrow{display:flex;align-items:center;gap:6px}
-.dcp-details .dcp-sec{flex:1;min-width:0;text-align:left;background:transparent;border:0;cursor:pointer;padding:8px 0 2px;letter-spacing:.08em;font-size:11px;font-weight:700;color:#8fb4ff;font-family:inherit}
-.dcp-details .dcp-sec:hover{color:#b9d2ff}
+.dcp-details .dcp-sec{flex:1;min-width:0;text-align:left;background:transparent;border:0;cursor:pointer;padding:8px 0 2px;letter-spacing:.08em;font-size:11px;font-weight:700;color:#a5b4fc;font-family:inherit}
+.dcp-details .dcp-sec:hover{color:#c7d2fe}
 .dcp-details .dcp-body-in{display:flex;flex-direction:column;gap:8px;padding:2px 0 10px}
 /* v0.7 功能③：剪贴板一键替换 —— secrow 内标题撑满、按钮靠右；剪贴板不可用时
    的降级粘贴区（沿用现有虚线边框/圆角/色板风格，textarea 走 .dcp-panel 基础样式）。 */
@@ -2643,17 +2645,17 @@ window.__ModuleLoader__.load({
 .dcp-paste-fallback textarea{font-size:12px;min-height:64px}
 .dcp-paste-fallback-foot{display:flex;justify-content:flex-end}
 /* v0.8 画师分区：搜索下拉（只能从列表点选/点★收藏）与收藏胶囊 */
-.dcp-artist-drop{display:flex;flex-direction:column;max-height:180px;overflow-y:auto;border:1px solid rgba(255,255,255,.16);border-radius:6px;background:rgba(24,24,30,.98)}
+.dcp-artist-drop{display:flex;flex-direction:column;max-height:180px;overflow-y:auto;border:1px solid rgba(255,255,255,.16);border-radius:8px;background:rgba(15,17,24,.98)}
 .dcp-artist-drop-row{display:flex;align-items:center;gap:6px;padding:4px 8px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.06)}
-.dcp-artist-drop-row:hover{background:rgba(47,111,235,.28)}
-.dcp-artist-drop-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:#e9e9ef}
-.dcp-artist-drop-star{flex:none;background:transparent;border:0;color:#fcd34d;font-size:13px;cursor:pointer;padding:0 2px}
-.dcp-artist-chip{display:inline-flex;align-items:center;gap:6px;background:rgba(47,111,235,.18);border:1px solid rgba(91,157,255,.45);border-radius:6px;padding:2px 8px;font-size:12px;color:#d8e6ff}
+.dcp-artist-drop-row:hover{background:rgba(99,102,241,.3)}
+.dcp-artist-drop-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:#eceef4}
+.dcp-artist-drop-star{flex:none;background:transparent;border:0;color:#fbbf24;font-size:13px;cursor:pointer;padding:0 2px}
+.dcp-artist-chip{display:inline-flex;align-items:center;gap:6px;background:rgba(99,102,241,.18);border:1px solid rgba(129,140,248,.45);border-radius:8px;padding:2px 8px;font-size:12px;color:#d6dcff}
 .dcp-artist-chip button{background:transparent;border:0;color:#fda4af;cursor:pointer;font:inherit;font-size:11px;padding:0}
 /* v1.2.1（需求 2）：面板内的「＋分组」菜单 —— 组多时只滚动这一块，不把整个下拉撑爆 */
 .dcp-group-menu{display:flex;flex-direction:column;gap:4px;border:1px dashed rgba(255,255,255,.22);border-radius:6px;padding:6px 8px;margin-top:4px}
 .dcp-group-chips{display:flex;flex-wrap:wrap;gap:6px;max-height:120px;overflow-y:auto}
-.dcp-group-chips .dcp-btn.on{background:rgba(34,197,94,.22);color:#86efac}
+.dcp-group-chips .dcp-btn.on{background:rgba(52,211,153,.2);color:#6ee7b7}
 `;
 
 		// 声明依赖 slots 服务：fiber 会等 ui-renderer 把服务备好再跑 apply；

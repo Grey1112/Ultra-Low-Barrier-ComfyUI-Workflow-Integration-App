@@ -1,10 +1,12 @@
 // settings.js —— 设置页（F5）：语言、ComfyUI 内嵌/外接、局域网监听、镜像与下载阈值、
 // LLM 上下文条数、离线自检。窗口行为两项按需求隐藏（本独立版是纯浏览器页面，没有托盘进程），
 // 页面上明确说明原因。
+// v2.0.0（用户要求）：移除「保存」按钮 —— 所有更改防抖 600ms 自动保存、即刻生效；
+// 例外：API Key 是只写字段，输入中途的半截 Key 绝不能落库，只能显式「保存 Key」/「测试连接」。
 'use strict';
 
 const h = React.createElement;
-const { useState, useEffect } = React;
+const { useState, useEffect, useRef } = React;
 
 function Field(props) {
   const { label, hint, children } = props;
@@ -14,8 +16,64 @@ function Field(props) {
     hint ? h('span', { className: 'hint' }, hint) : null);
 }
 
+/** 把表单状态规范成与后端一致的保存 payload（只挑字段、统一数字/布尔/数组）。
+    自动保存与「服务端快照对比」共用它：两边走同一套规范化，值没变就不发请求。
+    注意 apiKey 恒为空串 —— 后端把空 Key 当「不改」，自动保存永远不碰 Key。 */
+function buildPayload(comfy, listen, download, llm, apiCfg, lang) {
+  const proxies = Array.isArray(download.githubProxies)
+    ? download.githubProxies
+    : String(download.githubProxiesText || '').split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
+  // 镜像梯队：多行文本框 → 数组（空数组 = 用后端按基地址组合出来的默认梯队）
+  const lines = (v) => (typeof v === 'string' ? v.split(/\r?\n/).map((x) => x.trim()).filter(Boolean) : (Array.isArray(v) ? v : []));
+  return {
+    lang,
+    comfy: { ...comfy, port: Number(comfy.port) || 8188 },
+    listen: { ...listen, lan: !!listen.lan, port: Number(listen.port) || 8788 },
+    download: {
+      officialTimeoutMs: Number(download.officialTimeoutMs) || 10000,
+      startDeadlineMs: Number(download.startDeadlineMs) || 10000,
+      stallDeadlineMs: Number(download.stallDeadlineMs) || 15000,
+      slowThresholdKBs: Number(download.slowThresholdKBs) || 200,
+      slowWindowMs: Number(download.slowWindowMs) || 30000,
+      stallKBs: Number(download.stallKBs) || 30,
+      hfMirror: download.hfMirror || 'https://hf-mirror.com',
+      aifasthub: download.aifasthub || 'https://aifasthub.com',
+      modelscope: download.modelscope || 'https://modelscope.cn',
+      useModelScope: download.useModelScope !== false,
+      hfMirrors: lines(download.hfMirrors),
+      nodeMirrors: lines(download.nodeMirrors),
+      jsdelivrMirrors: lines(download.jsdelivrMirrors),
+      pipIndex: download.pipIndex || '',
+      githubProxies: proxies,
+    },
+    llm: {
+      provider: llm.provider === 'api' ? 'api' : 'local',
+      contextMessages: Math.max(0, Math.min(20, Number(llm.contextMessages) || 0)),
+      defaultModel: llm.defaultModel || '',
+      port: Number(llm.port) || 8199,
+      ctxSize: Number(llm.ctxSize) || 8192,
+      maxTokens: Math.max(64, Math.min(8192, Number(llm.maxTokens) || 512)),
+      gpuLayers: llm.gpuLayers === undefined ? 99 : Number(llm.gpuLayers),
+      characterRepair: llm.characterRepair !== false,
+      sendContext: llm.sendContext === true,
+      keepMessages: Math.max(2, Math.min(2000, Number(llm.keepMessages) || 40)),
+      api: {
+        baseUrl: apiCfg.baseUrl || '',
+        apiKey: '',
+        model: apiCfg.model || '',
+        temperature: Number(apiCfg.temperature) || 0.6,
+        maxTokens: Math.max(64, Math.min(393216, Number(apiCfg.maxTokens) || 4096)),
+        reasoning: ['off', 'low', 'high', 'max'].includes(apiCfg.reasoning) ? apiCfg.reasoning : 'off',
+        retries: Math.max(0, Math.min(5, apiCfg.retries === undefined ? 2 : Number(apiCfg.retries))),
+      },
+    },
+  };
+}
+
+const EMPTY_API = { baseUrl: '', apiKey: '', model: '', temperature: 0.6, maxTokens: 4096, reasoning: 'off', retries: 2 };
+
 export default function SettingsPage(props) {
-  const { api, put, post, t, state, settings, refresh, toast } = props;
+  const { api, put, post, t, state, settings, refresh, toast, changeLang } = props;
   const s = settings || {};
   const [comfy, setComfy] = useState(s.comfy || { mode: 'embedded', dir: '', port: 8188, autoStart: false, extraArgs: [] });
   const [listen, setListen] = useState(s.listen || { host: '127.0.0.1', port: 8788, lan: false });
@@ -28,28 +86,65 @@ export default function SettingsPage(props) {
   const [lang, setLang] = useState(s.lang || 'zh');
   const [detect, setDetect] = useState(null);
   const [checks, setChecks] = useState(state && state.selfcheck ? state.selfcheck : null);
-  const [busy, setBusy] = useState(false);
   // 镜像测速（设置页 → 下载）：默认测最小档生图权重的官方直链，各源下 100 MiB。
   const [speedUrl, setSpeedUrl] = useState('https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/diffusion_models/anima-turbo-v1.1.safetensors');
   const [speedMib, setSpeedMib] = useState(100);
   const [speed, setSpeed] = useState(null);
   const [speedBusy, setSpeedBusy] = useState(false);
+  // ── v1.3.4 自动保存 ──────────────────────────────────────────────
+  // savedPayloadRef = 「服务端已有值」经 buildPayload 规范化后的快照：表单 payload 与它一致
+  // 就不发请求（首帧同步、保存回声都不会触发多余保存）。pendingRef = 存在未落库的本地修改，
+  // 此期间服务端 settings 快照不回填表单，避免自动保存的 refresh 回声打断用户输入。
+  const savedPayloadRef = useRef('');
+  const pendingRef = useRef(false);
+  const saveTimer = useRef(null);
+  const primedRef = useRef(false);
 
+  // 服务端快照 → 表单回填。只在「没有未保存修改」时执行，防止旧快照覆盖正在编辑的值。
   useEffect(() => {
-    if (!settings) return;
+    if (!settings || pendingRef.current) return;
     setComfy(settings.comfy || {});
     setListen(settings.listen || {});
     setDownload(settings.download || {});
     setLlm(settings.llm || {});
-    setApiCfg((settings.llm && settings.llm.api) || { baseUrl: '', apiKey: '', model: '', temperature: 0.6, maxTokens: 4096, reasoning: 'off', retries: 2 });
+    setApiCfg((settings.llm && settings.llm.api) || EMPTY_API);
     setLang(settings.lang || 'zh');
+    savedPayloadRef.current = JSON.stringify(buildPayload(
+      settings.comfy || {}, settings.listen || {}, settings.download || {},
+      settings.llm || {}, (settings.llm && settings.llm.api) || EMPTY_API, settings.lang || 'zh'));
+    primedRef.current = true;
   }, [settings]);
+
+  // 即刻生效：任何表单变化 → 防抖 600ms 自动保存。改回原值则取消保存；成功静默，失败才提示。
+  useEffect(() => {
+    if (!primedRef.current) return;
+    clearTimeout(saveTimer.current);
+    const payload = JSON.stringify(buildPayload(comfy, listen, download, llm, apiCfg, lang));
+    if (payload === savedPayloadRef.current) { pendingRef.current = false; return; }
+    pendingRef.current = true;
+    saveTimer.current = setTimeout(async () => {
+      try {
+        // v1.1.0（修复 B7 同源缺口）：PUT 响应就是保存后的完整设置，开启局域网时令牌正在其中，
+        // 就地取用（此路径不再 refresh()，避免设置快照回填与自动保存互相打架；顶栏状态由轮询追上）。
+        const next = await put('/app/settings', JSON.parse(payload));
+        savedPayloadRef.current = payload;
+        if (next && next.listen && next.listen.token) setFreshToken(next.listen.token);
+      } catch (e) {
+        toast(t('toast.failed') + '：' + e.message, 'error');
+      } finally {
+        pendingRef.current = false;
+      }
+    }, 600);
+  }, [comfy, listen, download, llm, apiCfg, lang, put, t, toast]);
 
   /** 测试外接 API：先存一次配置（否则后端测的是旧值），再调 /app/llm/api/test。 */
   async function testApi() {
     setApiTest(t('common.loading'));
     try {
-      await put('/app/settings', { llm: { api: { ...apiCfg, temperature: Number(apiCfg.temperature) || 0.6, maxTokens: Number(apiCfg.maxTokens) || 4096 } } });
+      // v1.3.3：`hasKey` 是 GET /app/settings 下发时的**派生字段**（apiKey 被掩码成 '' 后附带的布尔），
+      // 不能跟着表单回写 —— 旧实现把它存进了 settings.json（实测），后端还得防御性剥离。
+      const { hasKey, ...apiFields } = apiCfg;
+      await put('/app/settings', { llm: { api: { ...apiFields, temperature: Number(apiCfg.temperature) || 0.6, maxTokens: Number(apiCfg.maxTokens) || 4096 } } });
       const r = await post('/app/llm/api/test', {});
       setApiTest(t('settings.llm.apiTestOk') + ` · ${r.ms}ms · ${r.model}`
         + (r.models && r.models.length ? ` · ${r.models.length} models` : '')
@@ -104,74 +199,17 @@ export default function SettingsPage(props) {
     toast(t('settings.download.presetCn'), 'ok');
   }
 
-  async function save() {
-    setBusy(true);
+  /** v1.3.4：显式保存 API Key。自动保存的 payload 恒不带 Key（见 buildPayload），
+      输入到一半的 Key 只能由用户主动点「保存 Key」或「测试连接」落库。 */
+  async function saveApiKey() {
     try {
-      const proxies = Array.isArray(download.githubProxies)
-        ? download.githubProxies
-        : String(download.githubProxiesText || '').split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
-      // 镜像梯队：多行文本框 → 数组（空数组 = 用后端按基地址组合出来的默认梯队）
-      const lines = (v) => (typeof v === 'string' ? v.split(/\r?\n/).map((x) => x.trim()).filter(Boolean) : (Array.isArray(v) ? v : []));
-      const next = await put('/app/settings', {
-        lang,
-        comfy: { ...comfy, port: Number(comfy.port) || 8188 },
-        listen: { ...listen, lan: !!listen.lan, port: Number(listen.port) || 8788 },
-        download: {
-          officialTimeoutMs: Number(download.officialTimeoutMs) || 10000,
-          startDeadlineMs: Number(download.startDeadlineMs) || 10000,
-          stallDeadlineMs: Number(download.stallDeadlineMs) || 15000,
-          slowThresholdKBs: Number(download.slowThresholdKBs) || 200,
-          slowWindowMs: Number(download.slowWindowMs) || 30000,
-          stallKBs: Number(download.stallKBs) || 30,
-          hfMirror: download.hfMirror || 'https://hf-mirror.com',
-          aifasthub: download.aifasthub || 'https://aifasthub.com',
-          modelscope: download.modelscope || 'https://modelscope.cn',
-          useModelScope: download.useModelScope !== false,
-          hfMirrors: lines(download.hfMirrors),
-          nodeMirrors: lines(download.nodeMirrors),
-          jsdelivrMirrors: lines(download.jsdelivrMirrors),
-          pipIndex: download.pipIndex || '',
-          githubProxies: proxies,
-        },
-        llm: {
-          provider: llm.provider === 'api' ? 'api' : 'local',
-          contextMessages: Math.max(0, Math.min(20, Number(llm.contextMessages) || 0)),
-          defaultModel: llm.defaultModel || '',
-          port: Number(llm.port) || 8199,
-          ctxSize: Number(llm.ctxSize) || 8192,
-          maxTokens: Math.max(64, Math.min(8192, Number(llm.maxTokens) || 512)),
-          gpuLayers: llm.gpuLayers === undefined ? 99 : Number(llm.gpuLayers),
-          characterRepair: llm.characterRepair !== false,
-          sendContext: llm.sendContext === true,
-          keepMessages: Math.max(2, Math.min(2000, Number(llm.keepMessages) || 40)),
-          api: {
-            baseUrl: apiCfg.baseUrl || '',
-            apiKey: apiCfg.apiKey || '',
-            model: apiCfg.model || '',
-            temperature: Number(apiCfg.temperature) || 0.6,
-            maxTokens: Math.max(64, Math.min(393216, Number(apiCfg.maxTokens) || 4096)),
-            reasoning: ['off', 'low', 'high', 'max'].includes(apiCfg.reasoning) ? apiCfg.reasoning : 'off',
-            retries: Math.max(0, Math.min(5, apiCfg.retries === undefined ? 2 : Number(apiCfg.retries))),
-          },
-        },
-      });
-      toast(t('settings.saved'), 'ok');
-      // v1.1.0（修复 B7 的同源缺口）：PUT 的响应就是保存后的完整设置，开启局域网时令牌正是在
-      // 这一次请求里生成的。旧实现丢弃响应、只 refresh() 状态 —— 而 /app/state 当时不含 listen，
-      // 且开启局域网后本页尚未带令牌，refresh()/selfcheck 会被自身的令牌校验挡下（403），
-      // 于是"开启局域网后看不到令牌"永远修不好。令牌就地取用，状态刷新失败也不再算保存失败。
-      if (next && next.listen && next.listen.token) setFreshToken(next.listen.token);
-      try {
-        await refresh();
-        setChecks(await api('/app/selfcheck'));
-      } catch (e) {
-        if (next && next.listen && next.listen.token) toast(t('settings.listen.lanEnabled'), 'warn');
-        else throw e;
-      }
+      // `hasKey` 是 GET /app/settings 的派生字段，不能跟着回写（见 testApi 注释）。
+      const { hasKey, ...apiFields } = apiCfg;
+      await put('/app/settings', { llm: { api: { ...apiFields, temperature: Number(apiCfg.temperature) || 0.6, maxTokens: Number(apiCfg.maxTokens) || 4096 } } });
+      toast(t('settings.llm.apiKey.saved'), 'ok');
+      await refresh();
     } catch (e) {
       toast(t('toast.failed') + '：' + e.message, 'error');
-    } finally {
-      setBusy(false);
     }
   }
 
@@ -220,8 +258,9 @@ export default function SettingsPage(props) {
     h('div', { className: 'card' },
       h('div', { className: 'card-title' }, t('settings.lang')),
       h('div', { className: 'row' },
-        h('button', { className: 'btn' + (lang === 'zh' ? ' primary' : ''), onClick: () => setLang('zh') }, t('settings.lang.zh')),
-        h('button', { className: 'btn' + (lang === 'en' ? ' primary' : ''), onClick: () => setLang('en') }, t('settings.lang.en')),
+        // v1.3.4：与顶栏按钮同一通道（changeLang 立即切换并持久化），不再依赖旧版「保存」。
+        h('button', { className: 'btn' + (lang === 'zh' ? ' primary' : ''), onClick: () => { setLang('zh'); if (changeLang) changeLang('zh'); } }, t('settings.lang.zh')),
+        h('button', { className: 'btn' + (lang === 'en' ? ' primary' : ''), onClick: () => { setLang('en'); if (changeLang) changeLang('en'); } }, t('settings.lang.en')),
         h('span', { className: 'hint' }, t('settings.restartHint')))),
 
     h('div', { className: 'settings-grid' },
@@ -369,12 +408,15 @@ export default function SettingsPage(props) {
                 onChange: (e) => setApiCfg({ ...apiCfg, apiKey: e.target.value }),
               }),
               // v1.2.0：Key 改成"只写"字段 —— 服务端不再回显明文，页面留空保存也不会清掉它；
-              // 要清空必须显式点这里。这样"切一下思考挡位"再也不会要求重新输入 Key。
+              // 要清空必须显式点这里。自动保存不携带 Key，写入只走「保存 Key」/「测试连接」。
               h('div', { className: 'row tight', style: { marginTop: 4 } },
                 h('span', { className: 'hint' }, apiCfg.apiKey
                   ? t('settings.llm.apiKey.willSave')
                   : (keyStored ? t('settings.llm.apiKey.storedHint') : t('settings.llm.apiKey.emptyHint'))),
                 h('span', { className: 'sp' }),
+                apiCfg.apiKey ? h('button', {
+                  className: 'btn tiny primary', onClick: saveApiKey,
+                }, t('settings.llm.apiKey.save')) : null,
                 keyStored ? h('button', {
                   className: 'btn tiny', title: t('settings.llm.apiKey.clearConfirm'),
                   onClick: async () => {
@@ -441,10 +483,11 @@ export default function SettingsPage(props) {
         h('div', { className: 'card-title' }, t('settings.window.title')),
         h('div', { className: 'hint' }, t('settings.window.noTray')))),
 
+    // v1.3.4：「保存」按钮已移除 —— 全部更改自动保存、即刻生效；这里只留手动自检入口。
     h('div', { className: 'row' },
-      h('button', { className: 'btn primary', disabled: busy, onClick: save }, t('common.save')),
+      h('button', { className: 'btn tiny', onClick: async () => { setChecks(await api('/app/selfcheck')); } }, t('shell.recheck')),
       h('span', { className: 'sp' }),
-      h('button', { className: 'btn tiny', onClick: async () => { setChecks(await api('/app/selfcheck')); } }, t('shell.recheck'))),
+      h('span', { className: 'hint' }, t('settings.autosaveHint'))),
 
     h('div', { className: 'card', style: { marginTop: 12 } },
       h('div', { className: 'card-title' }, t('shell.selfcheckIssues')),

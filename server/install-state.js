@@ -27,7 +27,10 @@ const SCHEMA = 1;
 //   · `group` 指明它归属哪一组（见 GROUPS）。
 const COMPONENTS = [
   { id: 'runtime', group: 'prereq', visible: false, title: '运行时与解压工具（7-Zip）' },
-  { id: 'nodes', group: 'prereq', visible: false, title: '自定义节点（comfyui-anima-3-8B）' },
+  // v1.3.2：节点是**可选件**（Anima 已并入通用管线，装不上不影响出图；且它要装进 ComfyUI 的
+  // custom_nodes，本体没装好之前它必然"缺失"）。不计入前置组的就绪判定（required:false），
+  // 否则前置组任务显示"完成"，组状态却永远停在"未安装"。
+  { id: 'nodes', group: 'prereq', visible: false, required: false, title: '自定义节点（comfyui-anima-3-8B）' },
   { id: 'artists', group: 'prereq', visible: false, title: '画师清单（59,676 位 Danbooru tag）' },
   { id: 'licenses', group: 'prereq', visible: false, title: '许可与第三方声明' },
   { id: 'comfyui', group: 'comfyui', visible: false, title: 'ComfyUI 本体（便携包）' },
@@ -170,7 +173,9 @@ function groupStatus(opts = {}) {
   const comps = componentStatus(opts);
   return GROUPS.map((g) => {
     const members = g.members.map((id) => comps[id]).filter(Boolean);
-    const pending = members.filter((m) => !m.ok).map((m) => m.id);
+    // v1.3.2：`required:false` 的组件（自定义节点）不计入 pending —— 它要装进 ComfyUI 的
+    // custom_nodes，本体没装好之前它必然"缺"，把它算成硬性前置会让前置组永远显示"未安装"。
+    const pending = members.filter((m) => !m.ok && m.required !== false).map((m) => m.id);
     return {
       id: g.id,
       title: g.title,

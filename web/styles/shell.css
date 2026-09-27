@@ -1,20 +1,33 @@
 /* shell.css —— 独立版外壳与新页面共用的基础样式。
    面板自身的样式由 panel.js 的 CSS 常量注入（`.dcp-*`），这里只做布局与「面板落位」覆盖。
-   约定：新页面只能用本文件 + pages/pages.css 里存在的类名（新增类名必须进 CSS）。 */
+   约定：新页面只能用本文件 + pages/pages.css 里存在的类名（新增类名必须进 CSS）。
+   UI 精修：统一圆角/阴影/过渡令牌，强调色靛蓝紫；只动观感，结构与类名不变。 */
 
 :root {
-  --bg: #14151a;
-  --bg2: #1b1d24;
-  --bg3: #23262f;
-  --line: rgba(255, 255, 255, .1);
-  --fg: #e9e9ef;
-  --fg2: #c4c4cf;
-  --fg3: #9a9aa8;
-  --accent: #2f6feb;
-  --accent2: #5b9bff;
-  --ok: #4ade80;
-  --warn: #fcd34d;
-  --err: #fda4af;
+  /* 背景三层次：主底 / 面板底 / 抬升底 */
+  --bg: #111318;
+  --bg2: #171a23;
+  --bg3: #1e2230;
+  --line: rgba(255, 255, 255, .08);
+  --fg: #eceef4;
+  --fg2: #c6c9d6;
+  --fg3: #949aab;
+  /* 强调色：靛蓝紫 */
+  --accent: #6366f1;
+  --accent2: #818cf8;
+  --accent-soft: #a5b4fc;
+  /* 状态色 */
+  --ok: #34d399;
+  --warn: #fbbf24;
+  --err: #fb7185;
+  /* 几何与质感 */
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, .2);
+  --shadow-2: 0 12px 32px rgba(0, 0, 0, .42);
+  --ring: 0 0 0 3px rgba(129, 140, 248, .18);
+  --ease: .15s ease;
 }
 
 * { box-sizing: border-box; }
@@ -29,6 +42,19 @@ html, body {
 
 #dcp-app { height: 100%; }
 
+::selection { background: rgba(99, 102, 241, .45); }
+
+/* 全局纤细滚动条（工作台另有 8px 收窄版，以更具体规则生效） */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, .12);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: 8px;
+}
+::-webkit-scrollbar-thumb:hover { background-color: rgba(255, 255, 255, .2); }
+
 /* ── 布局 ───────────────────────────────────────────────── */
 .app { display: flex; height: 100%; min-height: 0; }
 
@@ -40,12 +66,12 @@ html, body {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 12px 10px;
+  padding: 14px 10px;
   min-height: 0;
 }
 
-.brand { font-weight: 700; font-size: 13px; line-height: 1.35; padding: 2px 4px 8px; color: #fff; }
-.brand .brand-sub { display: block; font-weight: 400; font-size: 11px; color: var(--fg3); }
+.brand { font-weight: 700; font-size: 13px; line-height: 1.4; padding: 2px 6px 10px; color: #fff; }
+.brand .brand-sub { display: block; font-weight: 400; font-size: 11px; color: var(--fg3); margin-top: 1px; }
 
 .nav { display: flex; flex-direction: column; gap: 2px; overflow-y: auto; min-height: 0; }
 
@@ -53,14 +79,16 @@ html, body {
   text-align: left;
   background: transparent;
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   color: var(--fg2);
   font: inherit;
   padding: 7px 10px;
   cursor: pointer;
+  transition: background-color var(--ease), color var(--ease), box-shadow var(--ease);
 }
 .nav-item:hover { background: rgba(255, 255, 255, .06); color: #fff; }
-.nav-item.active { background: var(--accent); color: #fff; }
+.nav-item.active { background: var(--accent); color: #fff; box-shadow: 0 2px 10px rgba(99, 102, 241, .35); }
+.nav-item:focus-visible { outline: 2px solid var(--accent2); outline-offset: 1px; }
 
 .main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 
@@ -70,13 +98,17 @@ html, body {
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-  padding: 9px 14px;
+  padding: 9px 16px;
   border-bottom: 1px solid var(--line);
   background: var(--bg2);
 }
 .topbar .sp { flex: 1; }
 
-.content { flex: 1; min-height: 0; overflow: hidden; display: flex; }
+/* 内容区纵向排列：横幅/失联/自检错误整行置顶，页签区占满其余空间；
+   全部为空时 :empty 直接收起，不留空隙。 */
+.content { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+.content > .page { flex: none; min-height: 0; overflow: visible; padding: 12px 16px 0; }
+.content > .page:empty { display: none; }
 
 /* ── v1.2.1：常驻标签页（切页只隐藏，不卸载） ──────────────
    工作台（生图面板 + 内嵌 LLM）必须一直挂载：它一卸载，用户填好的提示词、
@@ -97,29 +129,31 @@ html, body {
   font-size: 11px;
   color: var(--fg2);
   white-space: nowrap;
+  background: rgba(255, 255, 255, .03);
 }
-.badge.bad { color: var(--err); border-color: rgba(248, 113, 113, .35); }
-.badge.good { color: var(--ok); border-color: rgba(74, 222, 128, .35); }
-.badge.warn { color: var(--warn); border-color: rgba(252, 211, 77, .35); }
+.badge.bad { color: var(--err); border-color: rgba(251, 113, 133, .35); background: rgba(251, 113, 133, .08); }
+.badge.good { color: var(--ok); border-color: rgba(52, 211, 153, .35); background: rgba(52, 211, 153, .08); }
+.badge.warn { color: var(--warn); border-color: rgba(251, 191, 36, .35); background: rgba(251, 191, 36, .08); }
 
 .dot { width: 8px; height: 8px; border-radius: 50%; background: #6b7280; display: inline-block; }
-.dot.on { background: var(--ok); }
-.dot.off { background: #f87171; }
+.dot.on { background: var(--ok); box-shadow: 0 0 6px rgba(52, 211, 153, .55); }
+.dot.off { background: var(--err); }
 
 /* ── 页面 ───────────────────────────────────────────────── */
-.page { flex: 1; min-width: 0; overflow-y: auto; padding: 16px 18px 40px; }
+.page { flex: 1; min-width: 0; overflow-y: auto; padding: 18px 20px 44px; }
 
-.page-title { font-size: 16px; font-weight: 700; margin: 0 0 2px; }
-.page-sub { color: var(--fg3); font-size: 12px; margin: 0 0 14px; }
+.page-title { font-size: 17px; font-weight: 700; margin: 0 0 3px; letter-spacing: .01em; }
+.page-sub { color: var(--fg3); font-size: 12px; margin: 0 0 16px; }
 
 .card {
   background: var(--bg2);
   border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 12px 14px;
-  margin-bottom: 12px;
+  border-radius: var(--radius-lg);
+  padding: 14px 16px;
+  margin-bottom: 14px;
+  box-shadow: var(--shadow-1);
 }
-.card-title { font-size: 12px; font-weight: 700; color: #8fb4ff; letter-spacing: .06em; margin: 0 0 8px; }
+.card-title { font-size: 12px; font-weight: 700; color: var(--accent-soft); letter-spacing: .08em; margin: 0 0 10px; }
 
 .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .row.tight { gap: 5px; }
@@ -138,102 +172,117 @@ html, body {
 
 /* ── 控件 ───────────────────────────────────────────────── */
 .btn {
-  background: rgba(255, 255, 255, .12);
+  background: rgba(255, 255, 255, .09);
   color: #eceff5;
-  border: 1px solid transparent;
-  border-radius: 7px;
-  padding: 5px 11px;
+  border: 1px solid rgba(255, 255, 255, .08);
+  border-radius: var(--radius-sm);
+  padding: 5px 12px;
   font: inherit;
   font-size: 12px;
   cursor: pointer;
   white-space: nowrap;
+  transition: background-color var(--ease), border-color var(--ease), box-shadow var(--ease), filter var(--ease);
 }
-.btn.primary { background: var(--accent); color: #fff; }
-.btn.danger { background: #b91c1c; color: #fff; }
-.btn.tiny { padding: 2px 7px; font-size: 11px; }
+.btn.primary { background: var(--accent); border-color: transparent; color: #fff; box-shadow: 0 2px 10px rgba(99, 102, 241, .3); }
+.btn.danger { background: #dc2626; border-color: transparent; color: #fff; }
+.btn.tiny { padding: 2px 8px; font-size: 11px; }
 .btn:disabled { opacity: .45; cursor: default; }
 .btn:not(:disabled):hover { filter: brightness(1.12); }
+.btn:not(:disabled):active { filter: brightness(.95); }
+.btn:focus-visible { outline: 2px solid var(--accent2); outline-offset: 1px; }
 
 .input, .select, .textarea {
-  background: rgba(255, 255, 255, .07);
-  color: #f2f2f6;
-  border: 1px solid rgba(255, 255, 255, .14);
-  border-radius: 7px;
-  padding: 5px 8px;
+  background: rgba(255, 255, 255, .05);
+  color: #f2f3f7;
+  border: 1px solid rgba(255, 255, 255, .1);
+  border-radius: var(--radius-sm);
+  padding: 5px 9px;
   font: inherit;
   font-size: 12px;
   width: 100%;
   min-width: 0;
+  transition: border-color var(--ease), box-shadow var(--ease), background-color var(--ease);
 }
 .textarea { resize: vertical; min-height: 70px; }
-.input:focus, .select:focus, .textarea:focus { outline: 1.5px solid var(--accent2); }
+.input:hover, .select:hover, .textarea:hover { border-color: rgba(255, 255, 255, .18); }
+.input:focus, .select:focus, .textarea:focus {
+  outline: none;
+  border-color: rgba(129, 140, 248, .7);
+  box-shadow: var(--ring);
+  background: rgba(255, 255, 255, .06);
+}
 .input.narrow, .select.narrow { width: auto; }
-.option-dark option { background: #1c1c22; color: #f2f2f6; }
+.option-dark option { background: #1c1f2b; color: #f2f3f7; }
 .check { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--fg2); }
 .check input { accent-color: var(--accent); }
 
 /* ── 列表 ───────────────────────────────────────────────── */
-.list { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
-.list-row { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid rgba(255, 255, 255, .06); }
+.list { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: var(--radius-md); overflow: hidden; background: rgba(255, 255, 255, .02); }
+.list-row { display: flex; align-items: center; gap: 8px; padding: 7px 11px; border-bottom: 1px solid rgba(255, 255, 255, .05); transition: background-color var(--ease); }
 .list-row:last-child { border-bottom: 0; }
+.list-row:hover { background: rgba(255, 255, 255, .03); }
 .list-row .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .list-scroll { max-height: 320px; overflow-y: auto; }
 .count { color: var(--fg3); font-size: 11px; }
 
 .table { width: 100%; border-collapse: collapse; font-size: 12px; }
-.table th, .table td { text-align: left; padding: 5px 8px; border-bottom: 1px solid rgba(255, 255, 255, .07); }
-.table th { color: #8fb4ff; font-weight: 600; font-size: 11px; }
+.table th, .table td { text-align: left; padding: 6px 9px; border-bottom: 1px solid rgba(255, 255, 255, .06); }
+.table th { color: var(--accent-soft); font-weight: 600; font-size: 11px; letter-spacing: .04em; }
+.table tr:hover td { background: rgba(255, 255, 255, .025); }
 
 .chip {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  background: rgba(47, 111, 235, .18);
-  border: 1px solid rgba(91, 157, 255, .45);
+  background: rgba(99, 102, 241, .16);
+  border: 1px solid rgba(129, 140, 248, .4);
   border-radius: 999px;
   padding: 1px 9px;
   font-size: 11px;
-  color: #d8e6ff;
+  color: #d6dcff;
 }
-.chip.blocked { background: rgba(248, 113, 113, .14); border-color: rgba(248, 113, 113, .4); color: #ffd7d7; }
+.chip.blocked { background: rgba(251, 113, 133, .12); border-color: rgba(251, 113, 133, .4); color: #ffd9de; }
 .chip button { background: transparent; border: 0; color: inherit; cursor: pointer; font: inherit; font-size: 11px; padding: 0; }
 
 /* ── 弹窗 ───────────────────────────────────────────────── */
 .modal-mask {
-  position: fixed; inset: 0; background: rgba(0, 0, 0, .55);
+  position: fixed; inset: 0; background: rgba(6, 8, 14, .6);
+  backdrop-filter: blur(4px);
   display: flex; align-items: center; justify-content: center; z-index: 60;
 }
-.modal { background: var(--bg3); border: 1px solid var(--line); border-radius: 12px; padding: 16px; width: min(560px, 92vw); max-height: 86vh; overflow-y: auto; }
-.modal-title { font-weight: 700; margin-bottom: 8px; }
-.modal-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.modal { background: var(--bg3); border: 1px solid rgba(255, 255, 255, .1); border-radius: 14px; padding: 18px; width: min(560px, 92vw); max-height: 86vh; overflow-y: auto; box-shadow: var(--shadow-2); }
+.modal-title { font-weight: 700; margin-bottom: 10px; font-size: 14px; }
+.modal-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 
 /* ── Toast ──────────────────────────────────────────────── */
-.toasts { position: fixed; right: 14px; bottom: 14px; display: flex; flex-direction: column; gap: 8px; z-index: 80; }
+.toasts { position: fixed; right: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 80; }
 .toast {
-  background: rgba(28, 30, 38, .97);
-  border: 1px solid var(--line);
+  background: rgba(23, 26, 35, .97);
+  border: 1px solid rgba(255, 255, 255, .1);
   border-left: 3px solid var(--accent2);
-  border-radius: 8px;
-  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  padding: 9px 13px;
   font-size: 12px;
   max-width: 420px;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, .4);
+  box-shadow: var(--shadow-2);
+  animation: toast-in .18s ease-out;
 }
+@keyframes toast-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 .toast.ok { border-left-color: var(--ok); }
 .toast.warn { border-left-color: var(--warn); }
 .toast.error { border-left-color: var(--err); }
 
 /* ── 长任务视图 ─────────────────────────────────────────── */
-.job { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: rgba(255, 255, 255, .03); }
-.job-bar { height: 6px; border-radius: 3px; background: rgba(255, 255, 255, .1); overflow: hidden; margin: 6px 0; }
-.job-bar > i { display: block; height: 100%; background: linear-gradient(90deg, #2f6feb, #22c55e); transition: width .3s; }
+.job { border: 1px solid var(--line); border-radius: var(--radius-md); padding: 9px 11px; background: rgba(255, 255, 255, .025); }
+.job-bar { height: 6px; border-radius: 3px; background: rgba(255, 255, 255, .09); overflow: hidden; margin: 6px 0; }
+.job-bar > i { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--ok)); transition: width .3s; }
 .job-log {
   font-family: ui-monospace, Consolas, monospace;
   font-size: 11px;
   white-space: pre-wrap;
   max-height: 200px;
   overflow-y: auto;
-  background: rgba(0, 0, 0, .28);
+  background: rgba(0, 0, 0, .25);
   border-radius: 6px;
   padding: 6px 8px;
   margin-top: 6px;
@@ -259,7 +308,7 @@ html, body {
 
 .wizard-banner {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  background: rgba(252, 211, 77, .1); border: 1px solid rgba(252, 211, 77, .3);
-  border-radius: 8px; padding: 8px 12px; margin-bottom: 12px; font-size: 12px; color: #ffe9a8;
+  background: rgba(251, 191, 36, .09); border: 1px solid rgba(251, 191, 36, .28);
+  border-radius: var(--radius-md); padding: 9px 13px; margin-bottom: 14px; font-size: 12px; color: #fde68a;
 }
-.log-drawer { border-top: 1px solid var(--line); background: var(--bg2); max-height: 40vh; overflow-y: auto; padding: 10px 14px; }
+.log-drawer { border-top: 1px solid var(--line); background: var(--bg2); max-height: 40vh; overflow-y: auto; padding: 10px 16px; }

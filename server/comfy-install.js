@@ -225,7 +225,7 @@ async function ensure7z(job, opts = {}) {
         done = true;
         break;
       } catch (e) {
-        if (e && (e.code === dl.PAUSED || e.code === dl.CANCELED)) throw e;
+        if (e && (e.code === dl.PAUSED || e.code === dl.CANCELED || e.code === dl.RETASK)) throw e;
         lastErr = e; job.log('7zr.exe 来源失败：' + e.message, 'warn');
       }
     }
@@ -256,7 +256,7 @@ async function ensure7z(job, opts = {}) {
           ok = true;
           break;
         } catch (e) {
-          if (e && (e.code === dl.PAUSED || e.code === dl.CANCELED)) throw e;
+          if (e && (e.code === dl.PAUSED || e.code === dl.CANCELED || e.code === dl.RETASK)) throw e;
           lastErr = e; job.log('7z-extra 来源失败：' + e.message, 'warn');
         }
       }
@@ -278,7 +278,7 @@ async function ensure7z(job, opts = {}) {
       return { exe: x64, source: 'bundled' };
     }
   } catch (e) {
-    if (e && (e.code === dl.PAUSED || e.code === dl.CANCELED)) throw e;
+    if (e && (e.code === dl.PAUSED || e.code === dl.CANCELED || e.code === dl.RETASK)) throw e;
     job.log('解出 x64 版 7za 失败，回落到 7zr.exe（仍可解压 7z，但大包解压更慢）：' + e.message, 'warn');
   }
   if (fsx.isFile(r7zr)) {
@@ -294,22 +294,32 @@ async function ensure7z(job, opts = {}) {
   throw new Error('没有可用的 7-Zip（随项目获取失败，系统也未安装）。请安装 7-Zip 后重试。');
 }
 
-async function fetchText(url) {
+async function fetchText(url, control) {
   const s = load();
   for (const c of dl.buildCandidates(url, s)) {
+    // v1.3.2：每个候选之前都看一眼暂停/取消/换源意图 —— 此前这段最长几十秒完全不响应
+    if (control && typeof control.getState === 'function') {
+      const st = control.getState();
+      if (st === 'canceled') throw Object.assign(new Error('任务已被用户取消'), { code: dl.CANCELED });
+      if (st === 'paused') throw Object.assign(new Error('任务已暂停'), { code: dl.PAUSED });
+      if (st === 'retask') throw Object.assign(new Error('已自动换源'), { code: dl.RETASK });
+    }
     try {
       const r = await fetch(c.url, { signal: AbortSignal.timeout(15000), redirect: 'follow' });
       if (r.ok) return await r.text();
-    } catch { /* 试下一个 */ }
+    } catch (e) {
+      if (e && (e.code === dl.PAUSED || e.code === dl.CANCELED || e.code === dl.RETASK)) throw e;
+      /* 其余错误试下一个 */
+    }
   }
   return null;
 }
 
 /** 通过 GitHub API（走镜像）解析便携包的当前资产名；失败返回 null（回落到候选名）。
  *  同时把官方 `digest`（sha256）与 `size` 一起带出来 —— 走第三方代理也能校验是不是官方包。 */
-async function resolvePortableAsset(job) {
+async function resolvePortableAsset(job, opts = {}) {
   try {
-    const txt = await fetchText(RELEASE_API);
+    const txt = await fetchText(RELEASE_API, opts.control);
     if (!txt) return null;
     const j = JSON.parse(txt);
     const assets = Array.isArray(j.assets) ? j.assets : [];
@@ -320,6 +330,7 @@ async function resolvePortableAsset(job) {
     job.log(`GitHub Releases 最新便携包资产：${pick.name}（${fsx.fmtBytes(pick.size || 0)}${sha ? '，sha256 ' + sha.slice(0, 16) + '…' : ''}）`);
     return { name: pick.name, urls: [pick.browser_download_url], size: pick.size, sha256: sha, tag: j.tag_name };
   } catch (e) {
+    if (e && (e.code === dl.PAUSED || e.code === dl.CANCELED || e.code === dl.RETASK)) throw e;
     job.log('查询 Releases 资产名失败（将按候选名依次尝试）：' + e.message, 'warn');
     return null;
   }
@@ -437,7 +448,7 @@ async function downloadPortableArchive(job, opts = {}) {
     job.log('使用本地归档：' + a);
     return a;
   }
-  const resolved = await resolvePortableAsset(job);
+  const resolved = await resolvePortableAsset(job, opts);
   // 候选表：官方 Release（经镜像）→ 钉住版本的官方资产（带 sha256）→ 旧 latest 路径
   //        → 哈希校验通过的官方旧版镜像 → 第三方社区构建。
   const entries = [];
@@ -487,7 +498,7 @@ async function downloadPortableArchive(job, opts = {}) {
       if (e.note) job.log('注意：' + e.note, 'warn');
       break;
     } catch (err) {
-      if (err && (err.code === dl.PAUSED || err.code === dl.CANCELED)) throw err;
+      if (err && (err.code === dl.PAUSED || err.code === dl.CANCELED || err.code === dl.RETASK)) throw err;
       lastErr = err;
       job.log(`候选 ${e.name} 失败：${err.message}`, 'warn');
     }
@@ -507,6 +518,17 @@ async function downloadPortableArchive(job, opts = {}) {
 async function installFromArchive(job, archive, opts = {}) {
   const destRoot = paths.comfyEmbedded;
   const state = stateMod();
+  // v1.3.2：解压开始前先采样用户意图 —— 下载阶段攒下的暂停/取消/换源请求不能拖到解压完才生效
+  if (opts.control && typeof opts.control.getState === 'function') {
+    const st0 = opts.control.getState();
+    if (st0 === 'canceled') throw Object.assign(new Error('任务已被用户取消'), { code: dl.CANCELED });
+    if (st0 === 'paused') throw Object.assign(new Error('任务已暂停'), { code: dl.PAUSED });
+    if (st0 === 'retask') throw Object.assign(new Error('已自动换源'), { code: dl.RETASK });
+  }
+  // v1.3.1 修复：这里原本直接引用 `kind` —— 那是 installComfyUI() 的局部变量，本函数从未声明，
+  // 解压成功后执行 markComponent 时抛 `ReferenceError: kind is not defined`，任务被判失败。
+  // 用户看到的就是"ComfyUI 下载完成后报 kind is not defined"（其实文件已经装好了）。
+  const kind = opts.comfySource?.kind || 'archive';
   if (!archive || !fsx.isFile(archive)) throw new Error('归档不存在（请先完成 ComfyUI 下载）：' + archive);
   const localArchiveKind = archiveKind(archive);
 
@@ -518,8 +540,35 @@ async function installFromArchive(job, archive, opts = {}) {
   // 两个可能的权重落位：便携包内层 ComfyUI\models 与 destRoot\models
   const innerModels = path.join(destRoot, 'ComfyUI', 'models');
   const outerModels = path.join(destRoot, 'models');
+
+  const mergeBack = () => {
+    const pairs = [[path.join(modelsBackup, 'inner'), innerModels], [path.join(modelsBackup, 'outer'), outerModels]];
+    for (const [bak, dst] of pairs) {
+      if (!fsx.isDir(bak)) continue;
+      fsx.copyTree(bak, dst, { link: false });
+      fs.rmSync(bak, { recursive: true, force: true });
+    }
+  };
+  const restoreModels = () => {
+    if (!movedModels) return;
+    try {
+      mergeBack();
+    } catch (e) {
+      job.log('⚠️ 权重目录合并失败，备份仍保留在：' + modelsBackup + '（原因：' + e.message + '）', 'error');
+      return;
+    }
+    movedModels = false;
+  };
+
+  // v1.3.1（数据丢失修复）：上一轮安装可能死在「权重已挪进备份、解压还没跑完」之间
+  //（窗口被关 / 进程被杀 / 断电）。旧实现在这里**先无条件删掉备份** —— 那是用户权重唯一的副本，
+  // 下一次点安装就把模型永久删掉了。现在反过来：发现遗留备份先合并回来，再开始新一轮。
+  if (fsx.isDir(path.join(modelsBackup, 'inner')) || fsx.isDir(path.join(modelsBackup, 'outer'))) {
+    job.log('发现上次中断遗留的权重备份，先合并回权重目录再继续：' + modelsBackup, 'warn');
+    try { mergeBack(); } catch (e) { job.log('合并上次备份失败（备份原样保留，本次安装继续）：' + e.message, 'error'); }
+  }
+
   try {
-    fs.rmSync(modelsBackup, { recursive: true, force: true });
     for (const [src, tag] of [[innerModels, 'inner'], [outerModels, 'outer']]) {
       if (fsx.isDir(src)) {
         const dst = path.join(modelsBackup, tag);
@@ -533,28 +582,19 @@ async function installFromArchive(job, archive, opts = {}) {
     job.log('备份已有权重目录失败（改为原地保留，不做全量删除）：' + e.message, 'warn');
   }
 
-  const restoreModels = () => {
-    if (!movedModels) return;
-    try {
-      const pairs = [[path.join(modelsBackup, 'inner'), innerModels], [path.join(modelsBackup, 'outer'), outerModels]];
-      for (const [bak, dst] of pairs) {
-        if (!fsx.isDir(bak)) continue;
-        fsx.copyTree(bak, dst, { link: false });
-        fs.rmSync(bak, { recursive: true, force: true });
-      }
-    } catch (e) {
-      job.log('⚠️ 权重目录合并失败，备份仍保留在：' + modelsBackup + '（原因：' + e.message + '）', 'error');
-      return;
-    }
-    movedModels = false;
-  };
-
   // 解压需要 7-Zip；本地归档是 ZIP 时内置解压器就够（不去联网下 7-Zip）
   const sevenZip = await ensure7z(job, { ...opts, archiveIsZipOnly: localArchiveKind === 'zip' });
   if (sevenZip.exe) job.log(`使用 7-Zip：${sevenZip.exe}（来源：${sevenZip.source}）`);
   else job.log('本次不需要 7-Zip（归档是 ZIP，走内置解压器）');
 
   try {
+    // v1.3.1（数据丢失修复）：只有确认权重已安全挪进备份（或本来就没有权重目录）才允许清空
+    // destRoot。旧实现在备份失败时日志写着"原地保留"，紧接着却照样 rmSync —— 权重照样被删。
+    const modelsSafe = movedModels || (!fsx.isDir(innerModels) && !fsx.isDir(outerModels));
+    if (!modelsSafe) {
+      throw new Error('权重目录未能安全备份，已中止本次解压安装（权重原样保留）。'
+        + '请检查 ' + modelsBackup + ' 与磁盘空间后重试。');
+    }
     // 半成品目录只清"代码与解释器"，权重已经在上面挪走了
     fs.rmSync(destRoot, { recursive: true, force: true });
     fsx.ensureDir(destRoot);
@@ -733,12 +773,15 @@ async function installModels(job, ids, opts) {
   let doneBytes = 0;
   for (const m of wanted) {
     job.phase('models');
-    if (opts.control && opts.control.getState && opts.control.getState() !== 'running') throw Object.assign(new Error('已暂停/取消'), { code: opts.control.getState() === 'canceled' ? dl.CANCELED : dl.PAUSED });
+    if (opts.control && opts.control.getState && opts.control.getState() !== 'running') {
+      const cst = opts.control.getState();
+      throw Object.assign(new Error(cst === 'retask' ? '已自动换源' : '已暂停/取消'), { code: cst === 'canceled' ? dl.CANCELED : (cst === 'paused' ? dl.PAUSED : dl.RETASK) });
+    }
     try {
       const r = await installOneModel(job, m, { ...opts, modelsDir });
       if (r.skipped) skipped.push(m.id); else installed.push(m.id);
     } catch (e) {
-      if (e && (e.code === dl.PAUSED || e.code === dl.CANCELED)) throw e;
+      if (e && (e.code === dl.PAUSED || e.code === dl.CANCELED || e.code === dl.RETASK)) throw e;
       failed.push({ id: m.id, file: m.file, error: e.message });
       job.log(`模型 ${m.id} 安装失败，**自动跳过并继续下一个**：${e.message}`, 'error');
     }
@@ -993,6 +1036,7 @@ async function installComponent(job, refId, opts = {}) {
       const st = opts.control.getState();
       if (st === 'canceled') throw Object.assign(new Error('任务已被用户取消'), { code: dl.CANCELED });
       if (st === 'paused') throw Object.assign(new Error('任务已暂停'), { code: dl.PAUSED });
+      if (st === 'retask') throw Object.assign(new Error('已自动换源：中止当前步骤（断点保留，马上续传）'), { code: dl.RETASK });
     }
   };
   check();
@@ -1015,7 +1059,7 @@ async function installComponent(job, refId, opts = {}) {
         const r = await installNodes(job, { mode, externalDir: opts.externalDir, control: opts.control });
         return { refId, detail: r };
       } catch (e) {
-        if (e && (e.code === dl.PAUSED || e.code === dl.CANCELED)) throw e;
+        if (e && (e.code === dl.PAUSED || e.code === dl.CANCELED || e.code === dl.RETASK)) throw e;
         job.log('自定义节点未安装（Anima 已走通用管线，不影响出图）：' + e.message, 'warn');
         return { refId, skipped: true, softFail: true, detail: { error: e.message } };
       }
@@ -1083,13 +1127,14 @@ async function installPrereqGroup(job, opts = {}) {
       const st = opts.control.getState();
       if (st === 'canceled') throw Object.assign(new Error('任务已被用户取消'), { code: dl.CANCELED });
       if (st === 'paused') throw Object.assign(new Error('任务已暂停'), { code: dl.PAUSED });
+      if (st === 'retask') throw Object.assign(new Error('已自动换源：中止当前步骤（断点保留，马上续传）'), { code: dl.RETASK });
     }
     try {
       const r = await installComponent(job, id, opts);
       if (r && r.softFail) failed.push({ id, error: r.detail && r.detail.error });
       else done.push(id);
     } catch (e) {
-      if (e && (e.code === dl.PAUSED || e.code === dl.CANCELED)) throw e;
+      if (e && (e.code === dl.PAUSED || e.code === dl.CANCELED || e.code === dl.RETASK)) throw e;
       if (id === 'runtime') throw e;          // 解压前提：它失败就整组失败
       failed.push({ id, error: e.message });
       job.log(`前置组件「${id}」未完成（不影响出图）：${e.message}`, 'warn');

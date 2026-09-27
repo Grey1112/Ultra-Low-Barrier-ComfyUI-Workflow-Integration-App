@@ -33,7 +33,7 @@ const runtime = { pumpTimer: null, lastPersist: 0, bootstrapped: false };
 let seq = 1;
 
 const PERSIST_FIELDS = [
-  'id', 'key', 'kind', 'lane', 'refId', 'title', 'file', 'dest', 'url', 'urls', 'urlsFirst', 'bytes', 'sha256',
+  'id', 'key', 'kind', 'lane', 'refId', 'title', 'file', 'dest', 'destExisted', 'url', 'urls', 'urlsFirst', 'bytes', 'sha256',
   'state', 'phase', 'attempts', 'triedHosts', 'downloaded', 'total', 'speedKBs', 'etaSec', 'candidate',
   'error', 'note', 'message', 'archivePath', 'addedAt', 'startedAt', 'endedAt', 'percent', 'waiting', 'sinceProgressSec',
 ];
@@ -215,7 +215,7 @@ const COMPONENT_TASK_DEFS = {
   // 早期版本把它和「前置组件」放在同一条 lane（上限 1），于是前置组件一开跑，
   // ComfyUI 就只能在队列里干等 —— 用户报的"模型下载挤占 ComfyUI 下载位置"就发生在这里。
   prereq: { title: '前置组件', dest: null, lane: 'prereq' },
-  comfyui: { title: 'ComfyUI 本体', dest: path.join(paths.runtimeDl, 'ComfyUI_windows_portable.7z'), lane: 'comfyui' },
+  comfyui: { title: 'ComfyUI 本体', dest: path.join(paths.runtimeDl, 'ComfyUI_windows_portable_nvidia.7z'), lane: 'comfyui' },
 };
 
 function componentTask(refId) {
@@ -460,6 +460,10 @@ function pump() {
         .sort((a, b) => (a.order || 0) - (b.order || 0))[0];
       if (!next) break;
       run(next);
+      // v1.3.2 守卫：run() 没能启动它（同 key 的旧实例还在收尾，active 占坑）时状态仍是 queued，
+      // 必须跳出本轮 —— 否则这个同步循环会永远抓着同一条任务空转，把整个后端的事件循环卡死
+      //（实测：运行中「自动换源」后端立即假死，HTTP 全部无响应，就是这里的死循环）。
+      if (next.state === 'queued') break;
     }
   }
 }
@@ -480,6 +484,9 @@ function pct(downloaded, total) {
 function run(task, opts = {}) {
   if (active[task.key]) return;
   active[task.key] = task;
+  // v1.3.1：记录"动手之前 dest 是否已存在"。模型任务的 dest 就是**已安装模型的正式路径**，
+  // 取消/失败清理只允许删除本任务自己创建的文件（取消一个"重装"绝不许删掉用户原来的模型）。
+  if (task.dest && task.destExisted === undefined) task.destExisted = fsx.isFile(task.dest);
   setState(task, 'running', { startedAt: task.startedAt || nowIso(), error: null, speedKBs: null, downloaded: task.downloaded || 0, percent: task.percent || 0 });
   const s = load();
   const isComponent = task.kind === 'component';
@@ -493,11 +500,16 @@ function run(task, opts = {}) {
   // 用户意图由**独立标志**承载，而不是看任务状态：
   // 暂停时任务状态会立刻变成 pending（界面马上要能点「继续」），若把它当作中断信号，
   // 下载线程每 1 s 采一次就会立刻抛错 —— 两条路径会互相干扰。分开就干净了。
-  const ctl = { paused: false, canceled: false, released: false };
-  task._ctl = ctl;                        // 暴露给 pause/cancel（函数字段不落盘，无副作用）
-  const control = { getState: () => (ctl.canceled ? 'canceled' : (ctl.paused ? 'paused' : 'running')) };
-  // 本轮要跳过的来源 = 之前试过的（triedHosts，逐次累积）∪ 上一轮失败后累计的 skipHosts
-  const skipHosts = [...new Set([...(task.triedHosts || []), ...(task.skipHosts || [])])];
+  // v1.3.2：新增 retasked —— 「自动换源」对**运行中**的任务同样有效：
+  // 引擎在下一次 1 s 采样时中止当前来源（断点保留），finish() 把任务重新入队，
+  // pump 立刻让它带新 skipHosts 续传（comfyui 通道优先级最高，不会回队列干等）。
+  const ctl = { paused: false, canceled: false, released: false, retasked: false };
+  task._ctl = ctl;                        // 暴露给 pause/cancel/retask（函数字段不落盘，无副作用）
+  const control = { getState: () => (ctl.canceled ? 'canceled' : (ctl.paused ? 'paused' : (ctl.retasked ? 'retask' : 'running'))) };
+  // 本轮要跳过的来源 = retask 显式记下的"已失败来源"（skipHosts）。
+  // v1.3.2：**不再**把 triedHosts 一并算进来 —— 那里面混着"上次成功用过的好源"，
+  // 换源时把它拉黑会出现"唯一好源被跳过 → 任务失败"。
+  const skipHosts = [...new Set([...(task.skipHosts || [])])];
   // 同一任务被"释放"（阶段切换）时不要清进度：comfyui 的 download→install 要接着算
   if (task.phase !== 'install') {
     task.downloaded = 0;
@@ -519,11 +531,21 @@ function run(task, opts = {}) {
     }
     delete active[task.key];
     delete task._ctl;
+    if (ctl.retasked && !ctl.canceled && !ctl.paused) {  // v1.3.2：自动换源 —— 重新入队，pump 立刻续传（不算结束）；用户随后又取消/暂停时以用户为准
+      ctl.retasked = false;
+      setState(task, 'queued', { error: null, note: '已自动换源：跳过已试来源，从断点续传…' });
+      try { jobs.finish(job, { taskId: task.id, note: 'retask' }); } catch { /* 忽略 */ }
+      persist(true);
+      schedule();
+      return;
+    }
     if (ctl.canceled) {
-      setState(task, 'canceled', { endedAt: nowIso(), speedKBs: null, error: null });
+      // v1.3.2 守卫：若用户在引擎收尾期间已经把任务移回队列（canceled 后点了「继续」），尊重用户操作
+      if (task.state !== 'queued') setState(task, 'canceled', { endedAt: nowIso(), speedKBs: null, error: null });
       job.log('任务已取消：本地文件与断点已删除', 'warn');
     } else if (ctl.paused) {
-      setState(task, 'paused', { speedKBs: null, note: '已暂停（断点已保留，可随时继续）' });
+      // v1.3.2 守卫：若用户在引擎收尾期间已经点了「继续」（state 已是 queued），不要把暂停盖回去
+      if (task.state === 'running') setState(task, 'paused', { speedKBs: null, note: '已暂停（断点已保留，可随时继续）' });
       job.log('任务已暂停：断点已保留，点「继续」即可续传', 'warn');
     } else if (ok) {
       setState(task, 'done', { endedAt: nowIso(), percent: 100, speedKBs: null, error: null, message: '' });
@@ -533,8 +555,9 @@ function run(task, opts = {}) {
       }
     } else {
       setState(task, 'failed', { endedAt: nowIso(), speedKBs: null, error: (err && err.message) || String(err || '未知错误') });
-      // 失败时把"看起来在下载"的残片收掉，避免用户以为装了一半（.part 保留以便续传）
-      if (task.dest && fsx.isFile(task.dest) && task.bytes) {
+      // 失败时把"看起来在下载"的残片收掉，避免用户以为装了一半（.part 保留以便续传）。
+      // v1.3.1：只清**本任务自己创建**的文件 —— dest 在动手前就存在（用户已装好的模型）时绝不动它。
+      if (task.dest && task.destExisted === false && fsx.isFile(task.dest) && task.bytes) {
         const sz = fsx.sizeOf(task.dest);
         if (sz !== task.bytes) { try { fs.rmSync(task.dest, { force: true }); } catch { /* 忽略 */ } }
       }
@@ -611,6 +634,7 @@ function run(task, opts = {}) {
       });
       task.archivePath = archive;
       task.dest = archive;
+      task.destExisted = false;              // 归档是本任务自己下的产物（取消时允许删）
       task.downloaded = fsx.sizeOf(archive);
       task.total = task.downloaded;
       task.downloadPercent = 100;
@@ -661,6 +685,14 @@ function run(task, opts = {}) {
     .then(body)
     .then(() => finish(true, null))
     .catch((e) => {
+      // v1.3.2：自动换源 —— 引擎带出这一轮**真正失败过**的来源（不含当前源），并入 skipHosts；
+      // finish() 把任务重新入队，pump 立刻续传（新 run() 的 skipHosts 就只拉黑这些失败源）。
+      if (e && e.code === dl.RETASK) {
+        if (Array.isArray(e.failedHosts) && e.failedHosts.length) {
+          task.skipHosts = [...new Set([...(task.skipHosts || []), ...e.failedHosts])];
+        }
+        return finish(false, null);
+      }
       if (e && e.code === dl.PAUSED) { ctl.paused = true; return finish(false, null); }
       if (e && e.code === dl.CANCELED) { ctl.canceled = true; return finish(false, null); }
       return finish(false, e);
@@ -703,10 +735,16 @@ function cancel(id, opts = {}) {
   const wipe = opts.deleteFile !== false;
   if (t._ctl) t._ctl.canceled = true;      // 让在飞的下载线程立刻抛 DCP_CANCELED
   const removed = [];
-  if (wipe && t.dest) {
-    for (const p of [t.dest, t.dest + '.part']) {
-      try { if (fsx.isFile(p)) { fs.rmSync(p, { force: true }); removed.push(p); } } catch { /* 忽略 */ }
-    }
+  const rmFile = (p) => { try { if (p && fsx.isFile(p)) { fs.rmSync(p, { force: true }); removed.push(p); } } catch { /* 忽略 */ } };
+  if (wipe) {
+    // v1.3.1（数据丢失修复）：**模型任务的 dest 就是已安装模型的正式路径**。旧实现无条件删除 ——
+    // "重新下载一个已安装的模型，中途取消"会把用户原来的模型一并删掉。
+    // 规则：dest 只在"动手前不存在"（即本任务自己下的）时才删；`.part` 断点与归档缓存照删；
+    // 从未跑过的任务（queued 直接收消）视为"文件不是本任务创建的"，同样只清断点。
+    const keepModelDest = t.kind === 'model' && t.destExisted !== false;
+    if (t.dest && !keepModelDest) rmFile(t.dest);
+    if (t.dest) rmFile(t.dest + '.part');
+    if (t.archivePath && t.archivePath !== t.dest) { rmFile(t.archivePath); rmFile(t.archivePath + '.part'); }
   }
   if (t.kind === 'component') {
     // 组件：只清下载缓存 + 标记需要重下；**绝不删已装好的组件目录**（红线：不误删用户数 GB 数据）
@@ -721,12 +759,16 @@ function cancel(id, opts = {}) {
   return { task: t, removed };
 }
 
-/** 自动换源：忘掉最快源记忆 + 跳过已失败主机 + 重新排队（并真测一遍剩余来源）。 */
+/** 自动换源：忘掉最快源记忆 + 跳过已失败主机 + 重新排队（并真测一遍剩余来源）。
+ *  v1.3.2：对**运行中**的任务同样有效 —— 置 retasked 让引擎在 ≤1 s 内中止当前来源
+ *  （断点保留），finish() 重新入队后 pump 立刻续传。旧实现只改状态不动引擎：
+ *  运行中点换源会让任务卡在"排队"（active 占坑，run() 早退），引擎还在后台用旧来源跑。 */
 function retask(id) {
   const t = get(id);
   if (!t) throw new Error('任务不存在：' + id);
   const n = dl.forgetPreferred('');
   const prev = Array.isArray(t.triedHosts) ? t.triedHosts : [];
+  if (t.state === 'running' && t._ctl) t._ctl.retasked = true;
   // 清掉 .part 的"跨来源续传"顾虑：不同镜像的分块可能不一致，重新测速后从断点续传仍带 Range，
   // 因此这里**保留** .part（省流量），但把已试来源记下来，下一轮直接跳过它们。
   t.skipHosts = [...new Set(prev)];

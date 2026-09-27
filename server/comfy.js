@@ -93,7 +93,7 @@ async function status() {
 
 // ── 进程管理 ─────────────────────────────────────────────
 
-/** 一键启动：已在跑则直接返回；否则探测入口/解释器后 detached 拉起。 */
+/** 一键启动：已在跑则直接返回；否则探测入口/解释器后拉起（v2.0.0 起不带 detached —— 见 spawn 处注释）。 */
 async function launch() {
   const cur = current();
   if (await probe(cur.port, 1200)) return { online: true, launched: false, port: cur.port };
@@ -114,7 +114,10 @@ async function launch() {
     const out = fs.openSync(paths.comfyLog, 'a');
     const child = spawn(layout.python, args, {
       cwd: path.dirname(layout.mainPy),   // 入口脚本所在目录（便携包=内层 ComfyUI\）
-      detached: true,
+      // v2.0.0：**不能带 detached** —— 实测 Node 在 Windows 上 detached 会给子进程分配
+      // 自己的控制台，windowsHide 因此失效（Windows Terminal 直接弹出可见窗口，
+      // 用户报的"启动 ComfyUI 时前台弹 cmd 窗口"就是这个）。去掉 detached 后
+      // CREATE_NO_WINDOW 生效，全程无窗口；停止逻辑（taskkill /T + 归属记录）不依赖 detached。
       stdio: ['ignore', out, out],
       windowsHide: true,
     });
