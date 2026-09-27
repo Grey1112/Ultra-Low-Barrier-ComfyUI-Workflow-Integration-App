@@ -28,8 +28,8 @@
 
 | Item | Value |
 |---|---|
-| Version | `v2.0.0` |
-| Panel header badge | `🎨 Ultra-Low-Barrier ComfyUI Workflow Integration App v2.0.0` (the subtitle also shows `embedded mode` / `external mode`) |
+| Version | `v2.0.3` |
+| Panel header badge | `🎨 Ultra-Low-Barrier ComfyUI Workflow Integration App v2.0.3` (the subtitle also shows `embedded mode` / `external mode`) |
 | Backend default address | `http://127.0.0.1:8788/` |
 | Node runtime | A portable build ships with the project (`runtime\node`), **no pre-installation needed** |
 | npm dependencies | **Zero** (the `dependencies` / `devDependencies` of `package.json` are both empty) |

@@ -4,7 +4,7 @@
 > 其余四份文档的分工是：`README.md` 面向使用者、`FEATURES.md` 面向功能核对、`MIGRATION.md` 面向搬迁到别的机器、
 > `docs/FULL-REFERENCE.md` 是逐文件/逐接口/逐决策的完整参考。**本文件只讲"交接"**：谁负责什么、怎么验、怎么发、坑在哪。
 >
-> 版本：**v2.0.0**｜项目名：**超低门槛 ComfyUI 工作流集成应用**（包名 `comfy-panel-standalone`）｜最后更新：第十六轮（2.0.0 UI 改版）
+> 版本：**v2.0.3**｜项目名：**超低门槛 ComfyUI 工作流集成应用**（包名 `comfy-panel-standalone`）｜最后更新：第十六轮（2.0.0 UI 改版）
 >
 > **三个占位符**（本文件的真实路径不写死，避免交付物里出现机器路径）：
 > `<开发副本>` = 你手上的完整项目目录（含 `server\ web\ runtime\ models\ data\`）；
